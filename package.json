@@ -1,0 +1,18 @@
+{
+  "name": "stremio-watch-state-maintenance",
+  "version": "1.0.0",
+  "private": "false",
+  "type": "module",
+  "description": "Automatic cross-platform cleanup of stale completed Continue Watching progress in Stremio",
+  "scripts": {
+    "test": "node --test test/worker.test.js",
+    "check": "node --check src/worker.js",
+    "deploy": "wrangler deploy --config wrangler.local.toml"
+  },
+  "devDependencies": {
+    "wrangler": "4.134.0"
+  },
+  "engines": {
+    "node": ">=22.14.0"
+  }
+}

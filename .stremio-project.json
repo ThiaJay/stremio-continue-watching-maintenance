@@ -1,0 +1,14 @@
+{
+  "id": "continue-watching-maintenance",
+  "name": "Continue Watching Maintenance for Stremio",
+  "classification": "hosted-maintenance",
+  "status": "ACTIVE_PUBLIC_HOSTED",
+  "crossPlatform": true,
+  "deviceDependency": "none",
+  "releaseChannels": [
+    "github-source",
+    "github-release",
+    "private-scheduled-service",
+    "local-admin-recovery"
+  ]
+}

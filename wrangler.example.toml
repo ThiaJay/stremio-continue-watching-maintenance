@@ -1,0 +1,16 @@
+name = "stremio-watch-state-maintenance"
+main = "src/worker.js"
+compatibility_date = "2026-09-18"
+workers_dev = false
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+[[services]]
+binding = "METADATA"
+service = "aiometadata-smart-specials"
+
+[[d1_databases]]
+binding = "BACKUP_DB"
+database_name = "stremio-watch-state-maintenance"
+database_id = "<your backup D1 database id>"
