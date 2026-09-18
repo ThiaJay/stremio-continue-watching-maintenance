@@ -1,10 +1,10 @@
 # Continue Watching Maintenance for Stremio
 
-Automatic, cross-platform maintenance for a narrow Stremio account-state defect: a fully watched series can remain in **Continue Watching** because completed playback progress is still stored on its last released episode.
+Automatic, cross-platform maintenance for a narrow Stremio account-state defect: completed series and movies can remain in **Continue Watching** because completed playback progress is still stored.
 
 ## What it does
 
-The scheduled Worker evaluates a bounded batch of series with resume progress. It only acts when all currently released normal-season episodes are proven watched, the saved video is the final released episode, playback is not recent and the remaining resume state is above the watched threshold.
+The scheduled Worker evaluates a bounded batch of movies and series with resume progress. For series it only acts when all currently released normal-season episodes are proven watched, the saved video is the final released episode and playback is not recent. For movies it follows Stremio Core's own completion rule: the item must be flagged watched, playback must be quiet and stored progress must be beyond the native 90% credits threshold.
 
 When those conditions are met it clears **only** the LibraryItem `state.timeOffset`. It does not mark episodes watched or unwatched and it does not change the watched bitfield.
 

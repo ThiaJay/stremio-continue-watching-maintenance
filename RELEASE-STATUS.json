@@ -1,6 +1,6 @@
 {
   "product": "Continue Watching Maintenance for Stremio",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "status": "ACTIVE_PUBLIC_HOSTED",
   "classification": "hosted-maintenance",
   "normalMode": "private scheduled maintenance",
@@ -9,11 +9,13 @@
   "batchSize": 8,
   "maxWritesPerRun": 2,
   "deterministicTests": {
-    "passed": 12,
+    "passed": 16,
     "failed": 0
   },
   "hostedBackupExportVerified": true,
   "guardedRestore": true,
   "upstreamBug": "Stremio/stremio-bugs#2807",
-  "retirementTarget": "native Stremio Core fix"
+  "retirementTarget": "native Stremio Core fix",
+  "movieCreditsThreshold": 0.9,
+  "movieCompletionCleanup": true
 }

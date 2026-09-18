@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,decodeWatched,completionDecision,selectBatch,run
+  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,decodeWatched,completionDecision,selectBatch,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -110,3 +110,48 @@ test("hard write cap is enforced",async()=>{
   assert.equal(s.attemptedWrites,MAX_WRITES);assert.equal(puts,MAX_WRITES);
 });
 test("public surface is closed",async()=>{assert.equal((await (await import("../src/worker.js")).default.fetch(new Request("https://x/"))).status,404);});
+
+
+function movieItem({offset=950,duration=1000,flagged=1,mtime=NOW-QUIET_MS-1000,id="tt9990001"}={}){
+  return {
+    _id:id,type:"movie",name:"Movie Example",removed:false,temp:false,
+    _mtime:new Date(mtime).toISOString(),
+    state:{
+      lastWatched:new Date(mtime).toISOString(),timeWatched:950,timeOffset:offset,
+      overallTimeWatched:950,timesWatched:1,flaggedWatched:flagged,duration,
+      video_id:id,watched:null,noNotif:false
+    },
+    poster:null,posterShape:"poster",behaviorHints:{}
+  };
+}
+
+test("movie past Core credits threshold is eligible without metadata lookup",async()=>{
+  const item=movieItem({offset:950,duration:1000});
+  assert.ok(950/1000>CREDITS_THRESHOLD);
+  const d=await completionDecision(item,null,NOW);
+  assert.equal(d?.reason,"movie-past-native-credits-threshold-stale-progress");
+});
+
+test("movie at or below Core credits threshold is preserved",async()=>{
+  assert.equal(await completionDecision(movieItem({offset:900,duration:1000}),null,NOW),null);
+  assert.equal(await completionDecision(movieItem({offset:899,duration:1000}),null,NOW),null);
+});
+
+test("movie without watched flag or with recent playback is preserved",async()=>{
+  assert.equal(await completionDecision(movieItem({flagged:0}),null,NOW),null);
+  assert.equal(await completionDecision(movieItem({mtime:NOW-5*60*1000}),null,NOW),null);
+});
+
+test("scheduled movie cleanup does not depend on metadata service",async()=>{
+  const before=movieItem({id:"tt9990002"});
+  const f=fixture(before),db=new DB();
+  const env={
+    STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),
+    BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,
+    METADATA:{fetch:async()=>{throw new Error("metadata should not be called for movies");}}
+  };
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.verifiedWrites,1);
+  assert.equal(f.row.state.timeOffset,0);
+  assert.equal(db.rows.length,1);
+});

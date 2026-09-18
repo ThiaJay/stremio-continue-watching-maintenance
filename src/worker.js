@@ -4,6 +4,7 @@ const BATCH_SIZE=8;
 const MAX_WRITES=2;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
+const CREDITS_THRESHOLD=0.9;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
 
@@ -107,14 +108,22 @@ function activityTime(item){
   return values.length?Math.max(...values):0;
 }
 async function completionDecision(item,meta,now){
-  if(!item||item.type!=="series"||!/^tt\d{5,12}$/.test(item._id))return null;
+  if(!item||!["series","movie"].includes(item.type))return null;
   if(item.removed&&!item.temp)return null;
   const state=item.state||{};
   if(!(Number(state.timeOffset)>0)||!(Number(state.duration)>0))return null;
-  if(Number(state.timeOffset)/Number(state.duration)<WATCHED_THRESHOLD)return null;
-  if(Number(state.flaggedWatched)!==1)return null;
   if(now-activityTime(item)<QUIET_MS)return null;
 
+  if(item.type==="movie"){
+    if(Number(state.flaggedWatched)!==1)return null;
+    if(Number(state.timeOffset)/Number(state.duration)<=CREDITS_THRESHOLD)return null;
+    if(typeof state.video_id!=="string"||!state.video_id)return null;
+    return {id:item._id,before:structuredClone(item),reason:"movie-past-native-credits-threshold-stale-progress"};
+  }
+
+  if(!/^tt\d{5,12}$/.test(item._id))return null;
+  if(Number(state.timeOffset)/Number(state.duration)<WATCHED_THRESHOLD)return null;
+  if(Number(state.flaggedWatched)!==1)return null;
   const videos=orderedVideos(meta);assert(videos.length>0,"EPISODE_LIST_EMPTY");
   const ids=videos.map(v=>String(v.id));
   assert(new Set(ids).size===ids.length,"DUPLICATE_VIDEO_ID");
@@ -129,7 +138,7 @@ async function completionDecision(item,meta,now){
   return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-stale-progress"};
 }
 function selectBatch(items,scheduledTime){
-  const candidates=items.filter(x=>x?.type==="series"&&Number(x?.state?.timeOffset)>0&&/^tt\d{5,12}$/.test(x._id)&&!(x.removed&&!x.temp))
+  const candidates=items.filter(x=>["series","movie"].includes(x?.type)&&Number(x?.state?.timeOffset)>0&&!(x.removed&&!x.temp))
     .sort((a,b)=>String(a._id).localeCompare(String(b._id)));
   if(!candidates.length)return {items:[],batchIndex:0,batchCount:0,total:0};
   const batchCount=Math.ceil(candidates.length/BATCH_SIZE),slot=Math.floor(scheduledTime/CRON_MS),batchIndex=((slot%batchCount)+batchCount)%batchCount;
@@ -187,8 +196,11 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
   const rows=await library(env,[],deps),batch=selectBatch(rows,scheduledTime),plans=[],errors=[];
   for(const item of batch.items){
-    try{const meta=await metadata(env,item._id),d=await completionDecision(item,meta,scheduledTime);if(d){d.beforeHash=await hash(item);plans.push(d);}}
-    catch(e){errors.push(e?.code||"EVALUATION_FAILED");}
+    try{
+      const meta=item.type==="series"?await metadata(env,item._id):null;
+      const d=await completionDecision(item,meta,scheduledTime);
+      if(d){d.beforeHash=await hash(item);plans.push(d);}
+    }catch(e){errors.push(e?.code||"EVALUATION_FAILED");}
   }
   let attempted=0,verified=0,stopped=false;
   for(const plan of plans.slice(0,MAX_WRITES)){
@@ -201,4 +213,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,episodeInfo,orderedVideos,decodeWatched,completionDecision,selectBatch,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,episodeInfo,orderedVideos,decodeWatched,completionDecision,selectBatch,run,apply};

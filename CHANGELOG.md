@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-09-18
+
+- Extends automatic stale Continue Watching cleanup to movies using Stremio Core's native 90% credits threshold.
+- Requires the movie to be flagged watched, past the credits threshold and quiet before clearing progress.
+- Preserves lower-progress pauses and deliberate rewatches below the native credits threshold.
+- Movie cleanup does not depend on metadata lookup.
+- Adds four adversarial regression tests for movie completion semantics.
+
 ## 1.0.1 — 2026-09-18
 
 - Adds hosted encrypted-backup list/export tooling.
