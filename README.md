@@ -50,6 +50,30 @@ The authority is the shared Stremio account plus the hosted Worker. No client-sp
 
 Production credentials, account identifiers, D1 IDs and private metadata routes must not be committed.
 
+## Recovery/admin
+
+Normal operation remains automatic. Recovery is deliberately manual and guarded.
+
+List encrypted hosted recovery records:
+
+```text
+npm run hosted-backups -- list
+```
+
+Export and decrypt one into the ignored `.private/` folder:
+
+```text
+npm run hosted-backups -- export <backup-key>
+```
+
+Restore only after inspecting the exported record:
+
+```text
+node scripts/restore.mjs .private/hosted-watch-backup-....json --ack-account-write --auth-stdin
+```
+
+Restore verifies the expected Stremio account, requires the current LibraryItem to still match the cleanup candidate except for Stremio's modification timestamp, performs a second immediate pre-write read, restores the complete prior record and verifies the result by readback. It fails closed on any intervening change.
+
 ## Tests
 
 ```text

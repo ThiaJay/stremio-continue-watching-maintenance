@@ -1,0 +1,19 @@
+{
+  "product": "Continue Watching Maintenance for Stremio",
+  "version": "1.0.1",
+  "status": "ACTIVE_PUBLIC_HOSTED",
+  "classification": "hosted-maintenance",
+  "normalMode": "private scheduled maintenance",
+  "publicProtocolSurface": "NONE",
+  "cron": "*/10 * * * *",
+  "batchSize": 8,
+  "maxWritesPerRun": 2,
+  "deterministicTests": {
+    "passed": 12,
+    "failed": 0
+  },
+  "hostedBackupExportVerified": true,
+  "guardedRestore": true,
+  "upstreamBug": "Stremio/stremio-bugs#2807",
+  "retirementTarget": "native Stremio Core fix"
+}
