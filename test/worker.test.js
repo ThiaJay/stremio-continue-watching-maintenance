@@ -304,7 +304,7 @@ test("explicit watched fast lane clears a transition even when its item is outsi
     if(ep==="getUser")return Response.json({result:{_id:"account-1"}});
     if(ep==="datastoreGet"){
       if(body.all)return Response.json({result:structuredClone(current)});
-      return Response.json({result:body.ids.map(id=>current.find(x=>x._id===id)).filter(Boolean).map(structuredClone)});
+      return Response.json({result:body.ids.map(id=>current.find(x=>x._id===id)).filter(Boolean).map(x=>structuredClone(x))});
     }
     if(ep==="datastorePut"){
       puts++;const candidate=structuredClone(body.changes[0]),index=current.findIndex(x=>x._id===candidate._id);
