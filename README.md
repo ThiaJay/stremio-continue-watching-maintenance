@@ -26,6 +26,8 @@ If a new normal-season episode becomes released later, that episode remains unwa
 
 This is a **hosted-maintenance** component. Normal operation is automatic on a private Cloudflare scheduled Worker every 10 minutes. It has no public HTTP control surface and requires no PC, startup task or local daemon.
 
+Explicit watched-state transitions have a separate bounded priority lane. Recent series or movie transitions detected by the privacy-safe observation state are evaluated before the rotating ordinary maintenance batch, oldest first. The priority lane evaluates at most 12 items and performs at most 6 verified writes per run, while ordinary cleanup retains its existing 2-write cap. This prevents a burst of Mark as Watched or Mark Season as Watched actions from ageing out of the two-hour evidence window merely because the corresponding item is not in that run's rotating batch.
+
 Each run is bounded:
 - privacy-safe watched-state observation across canonical series with positive resume progress; unchanged observations cause no D1 write and store no titles or raw media IDs;
 - deterministic metadata/evaluation batch of at most 8 eligible items;

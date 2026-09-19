@@ -2,6 +2,8 @@ const API="https://api.strem.io/api";
 const MAX_LIBRARY=20000;
 const BATCH_SIZE=8;
 const MAX_WRITES=2;
+const EXPLICIT_BATCH_SIZE=12;
+const MAX_EXPLICIT_WRITES=6;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
@@ -226,6 +228,19 @@ function selectBatch(items,scheduledTime){
   return {items:candidates.slice(batchIndex*BATCH_SIZE,(batchIndex+1)*BATCH_SIZE),batchIndex,batchCount,total:candidates.length};
 }
 
+async function selectExplicitTransitionItems(items,observations,scheduledTime){
+  const candidates=[];
+  for(const item of items){
+    if(!["series","movie"].includes(item?.type)||!(Number(item?.state?.timeOffset)>0)||(item.removed&&!item.temp))continue;
+    const observation=observations.get(await observationKey(item));
+    const changedAt=Number(observation?.changed_at)||0;
+    if(changedAt<=0||changedAt>scheduledTime||scheduledTime-changedAt>BULK_WATCHED_TRANSITION_WINDOW_MS)continue;
+    candidates.push({item,observation,changedAt});
+  }
+  candidates.sort((a,b)=>a.changedAt-b.changedAt||String(a.item._id).localeCompare(String(b.item._id)));
+  return candidates.slice(0,EXPLICIT_BATCH_SIZE);
+}
+
 function b64(bytes){let s="";for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 function unb64(v){const p=v.replace(/-/g,"+").replace(/_/g,"/")+"===".slice((v.length+3)%4);return Uint8Array.from(atob(p),c=>c.charCodeAt(0));}
 async function cryptoKey(secret){
@@ -275,11 +290,26 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   assert(/^[0-9a-f]{64}$/i.test(env.EXPECTED_ACCOUNT_FINGERPRINT||""),"EXPECTED_ACCOUNT_REQUIRED");
   const expected=env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase();assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
-  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],errors=[];
+  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],errors=[];
   let observations=new Map();
   try{observations=await observeWatchedChanges(env,rows,scheduledTime);}catch(e){errors.push(e?.code||"OBSERVATION_FAILED");}
+
+  let explicitQueue=[];
+  try{explicitQueue=await selectExplicitTransitionItems(rows,observations,scheduledTime);}catch(e){errors.push(e?.code||"EXPLICIT_QUEUE_FAILED");}
+  const fastPlanIds=new Set();
+  for(const {item,observation} of explicitQueue){
+    try{
+      const meta=item.type==="series"?await metadata(env,item._id):null;
+      const transition=item.type==="series"
+        ?await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime)
+        :await movieMarkedWatchedTransitionDecision(item,observation,scheduledTime);
+      if(transition){transition.beforeHash=await hash(item);fastPlans.push(transition);fastPlanIds.add(item._id);}
+    }catch(e){errors.push(e?.code||"EXPLICIT_EVALUATION_FAILED");}
+  }
+
   for(const item of batch.items){
     try{
+      if(fastPlanIds.has(item._id))continue;
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       const meta=item.type==="series"?await metadata(env,item._id):null,observation=observations.get(await observationKey(item));
@@ -294,15 +324,34 @@ async function run(env,scheduledTime=Date.now(),deps={}){
       if(d){d.beforeHash=await hash(item);plans.push(d);}
     }catch(e){errors.push(e?.code||"EVALUATION_FAILED");}
   }
+
   let attempted=0,verified=0,stopped=false;
-  for(const plan of plans.slice(0,MAX_WRITES)){
+  for(const plan of fastPlans.slice(0,MAX_EXPLICIT_WRITES)){
     try{attempted++;const r=await apply(env,plan,expected,deps);if(["VERIFIED","ALREADY_CLEAR"].includes(r.status))verified++;}
     catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
   }
-  return {continueWatchingSeries:batch.total,batchIndex:batch.batchIndex,batchCount:batch.batchCount,scanned:batch.items.length,candidates:plans.length,attemptedWrites:attempted,verifiedWrites:verified,stopped,errorCodes:[...new Set(errors)].slice(0,12)};
+  if(!stopped){
+    for(const plan of plans.slice(0,MAX_WRITES)){
+      try{attempted++;const r=await apply(env,plan,expected,deps);if(["VERIFIED","ALREADY_CLEAR"].includes(r.status))verified++;}
+      catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
+    }
+  }
+  return {
+    continueWatchingSeries:batch.total,
+    batchIndex:batch.batchIndex,
+    batchCount:batch.batchCount,
+    scanned:batch.items.length,
+    fastLaneScanned:explicitQueue.length,
+    fastLaneCandidates:fastPlans.length,
+    candidates:fastPlans.length+plans.length,
+    attemptedWrites:attempted,
+    verifiedWrites:verified,
+    stopped,
+    errorCodes:[...new Set(errors)].slice(0,12)
+  };
 }
 const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run,apply};

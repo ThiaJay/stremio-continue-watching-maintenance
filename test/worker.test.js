@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -200,6 +200,19 @@ test("batch selection is deterministic and bounded",async()=>{
   for(let slot=0;slot<count;slot++)for(const x of selectBatch(rows,slot*10*60*1000).items)seen.add(x._id);
   assert.equal(seen.size,rows.length);
 });
+test("explicit transition queue is oldest first and bounded independently of ordinary batch",async()=>{
+  const rows=[],observations=new Map();
+  for(let i=0;i<EXPLICIT_BATCH_SIZE+5;i++){
+    const x=movieTransitionItem({timesWatched:1,offset:1000+i,lastWatched:NOW-24*60*60*1000,mtime:NOW-60*60*1000});
+    x._id="tt"+String(8000000+i);
+    rows.push(x);
+    observations.set(await observationKey(x),{changed_at:NOW-(i+1)*60_000});
+  }
+  const queue=await selectExplicitTransitionItems(rows,observations,NOW);
+  assert.equal(queue.length,EXPLICIT_BATCH_SIZE);
+  assert.ok(queue.every(({item})=>!selectBatch(rows,NOW).items.some(x=>x._id===item._id))||queue.length===EXPLICIT_BATCH_SIZE);
+  for(let i=1;i<queue.length;i++)assert.ok(queue[i-1].changedAt<=queue[i].changedAt);
+});
 class DB{
   constructor(){this.rows=[];this.state=[];this.observations=new Map();}
   prepare(sql){
@@ -274,6 +287,52 @@ test("observed explicit movie mark watched clears stale resume without faking en
   const second=await run(env,NOW+10*60_000,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW+10*60_000});
   assert.equal(second.verifiedWrites,1);assert.equal(f.row.state.timeOffset,0);assert.equal(f.puts,1);
   assert.equal(f.row.state.timeWatched,1_234_567);assert.equal(f.row.state.timesWatched,1);assert.equal(db.rows.length,1);
+});
+
+test("explicit watched fast lane clears a transition even when its item is outside the ordinary rotating batch",async()=>{
+  const current=[];
+  for(let i=0;i<25;i++){
+    const id="tt"+String(7000000+i),x=await libraryItem({pointer:"tt12345:1:2",bits:[true,false,false],offset:15_516,duration:120_000,flagged:0,mtime:NOW-QUIET_MS-60_000});
+    x._id=id;x.name="Series "+i;x.state.video_id=id+":1:2";x.state.lastWatched=new Date(NOW-QUIET_MS-60_000).toISOString();
+    const ids=videos().map(v=>v.id.replace("tt12345",id));
+    x.state.watched=await encode([true,false,false],ids);
+    current.push(x);
+  }
+  let puts=0;
+  const fetchImpl=async(url,init={})=>{
+    const ep=String(url).split("/").pop(),body=JSON.parse(init.body||"{}");
+    if(ep==="getUser")return Response.json({result:{_id:"account-1"}});
+    if(ep==="datastoreGet"){
+      if(body.all)return Response.json({result:structuredClone(current)});
+      return Response.json({result:body.ids.map(id=>current.find(x=>x._id===id)).filter(Boolean).map(x=>structuredClone(x))});
+    }
+    if(ep==="datastorePut"){
+      puts++;const candidate=structuredClone(body.changes[0]),index=current.findIndex(x=>x._id===candidate._id);
+      current[index]=candidate;return Response.json({result:{success:true}});
+    }
+    throw new Error(ep);
+  };
+  const db=new DB(),env={
+    STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,
+    METADATA:{fetch:async r=>{const id=new URL(r.url).pathname.split("/").pop().replace(".json","");return Response.json({meta:{id,type:"series",videos:videos().map(v=>({...v,id:v.id.replace("tt12345",id)}))}});}}
+  };
+  const first=await run(env,NOW,{fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(first.verifiedWrites,0);
+
+  const secondTime=NOW+10*60_000,ordinaryIds=new Set(selectBatch(current,secondTime).items.map(x=>x._id));
+  const target=current.find(x=>!ordinaryIds.has(x._id));
+  assert.ok(target);
+  const targetIds=videos().map(v=>v.id.replace("tt12345",target._id));
+  target.state.watched=await encode([true,true,true],targetIds);
+  target._mtime=new Date(NOW+5*60_000).toISOString();
+
+  const second=await run(env,secondTime,{fetchImpl,sleep:async()=>{},now:()=>secondTime});
+  assert.equal(ordinaryIds.has(target._id),false);
+  assert.equal(second.fastLaneCandidates,1);
+  assert.equal(second.verifiedWrites,1);
+  assert.equal(current.find(x=>x._id===target._id).state.timeOffset,0);
+  assert.equal(puts,1);
+  assert.ok(second.attemptedWrites<=MAX_EXPLICIT_WRITES+MAX_WRITES);
 });
 
 test("hard write cap is enforced",async()=>{
