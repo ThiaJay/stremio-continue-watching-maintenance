@@ -4,11 +4,19 @@ Automatic, cross-platform maintenance for a narrow Stremio account-state defect:
 
 ## What it does
 
-The scheduled Worker evaluates a bounded batch of movies and series with resume progress. For series it only acts when all currently released normal-season episodes are proven watched, the saved video is the final released episode and playback is not recent. For movies it follows Stremio Core's own completion rule: the item must be flagged watched, playback must be quiet and stored progress must be beyond the native 90% credits threshold.
+The scheduled Worker evaluates a bounded batch of movies and series with resume progress. For series it only acts when all currently released **normal-season** episodes are proven watched, the saved video is the final released normal episode and playback is not recent. A future-dated normal episode (including a TBC placeholder) does not count until its release date arrives.
+
+The normal completed-series path preserves the existing conservative 70% resume-position rule. A second, narrower path handles the Stremio fringe case where a fully watched final episode is left with a tiny residual pointer near the beginning: the pointer must be **15 seconds or less**, Stremio Core's per-video `timeWatched` must independently prove the native 70% watched threshold, the final episode must be flagged watched and every currently released normal episode must be watched. Anything beyond that tiny residual window is preserved as a possible intentional rewatch.
+
+Playback recency is taken from `state.lastWatched` when it exists, because Stremio Core updates that field while playing. The LibraryItem `_mtime` is still used for concurrency protection, although unrelated account changes no longer make old playback look recent.
+
+Season 0 is deliberately outside this maintainer's completion authority. Panels, Episode Insider/aftershow material, behind-the-scenes programmes and similar extras therefore cannot keep an otherwise completed normal series stuck in Continue Watching. Narrative-special classification remains owned by Story Order; this maintainer does not mark any Season 0 item watched or rewrite its identity.
+
+For movies it follows Stremio Core's own completion rule: the item must be flagged watched, playback must be quiet and stored progress must be beyond the native 90% credits threshold.
 
 When those conditions are met it clears **only** the LibraryItem `state.timeOffset`. It does not mark episodes watched or unwatched and it does not change the watched bitfield.
 
-If a new released episode appears later, that episode remains unwatched and the show can naturally return to Continue Watching.
+If a new normal-season episode becomes released later, that episode remains unwatched and the show can naturally return to Continue Watching.
 
 ## Normal operating mode
 
@@ -82,4 +90,4 @@ npm test
 npm run check
 ```
 
-The deterministic suite covers watched-bitfield decoding, completed-series qualification, future/new episodes, rewatch protection, recent playback, bounded batches, write caps, exact-field mutation and closure of the public HTTP surface.
+The deterministic suite covers watched-bitfield decoding, completed-series qualification, future/TBC episodes, Season 0 ancillary material, residual-pointer cleanup, Stremio Core watch-time evidence, rewatch protection, playback-recency semantics, legacy-ID aliases, bounded batches, write caps, exact-field mutation and closure of the public HTTP surface.

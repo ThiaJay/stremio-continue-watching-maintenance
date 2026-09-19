@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,decodeWatched,completionDecision,selectBatch,run
+  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,orderedVideos,decodeWatched,legacyAliasDecision,completionDecision,selectBatch,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -67,6 +67,71 @@ test("unwatched released episode prevents cleanup",async()=>{
   const item=await libraryItem({bits:[true,true,false]});
   assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
 });
+test("tiny residual final-episode pointer is correctable when Core watch-time proves completion",async()=>{
+  const duration=2_772_441;
+  const item=await libraryItem({offset:9_751,duration,mtime:NOW-5*24*60*60*1000});
+  item.state.timeWatched=2_758_237;
+  item.state.lastWatched=new Date(NOW-5*24*60*60*1000).toISOString();
+  item._mtime=new Date(NOW-5*60*1000).toISOString();
+  const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
+  assert.equal(d?.reason,"fully-watched-final-released-episode-residual-progress");
+});
+
+test("recent lastWatched is authoritative over old or unrelated record modification time",async()=>{
+  const item=await libraryItem({offset:9_000,duration:1000,mtime:NOW-2*24*60*60*1000});
+  item.state.timeWatched=1000;
+  item.state.lastWatched=new Date(NOW-5*60*1000).toISOString();
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("recent unrelated mtime does not make old completed playback look active",async()=>{
+  const item=await libraryItem({offset:9_000,duration:10_000,mtime:NOW-2*24*60*60*1000});
+  item.state.timeWatched=9_000;
+  item.state.lastWatched=new Date(NOW-2*24*60*60*1000).toISOString();
+  item._mtime=new Date(NOW-2*60*1000).toISOString();
+  const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
+  assert.ok(d);
+});
+
+test("meaningful low-progress final-episode rewatch is preserved",async()=>{
+  const item=await libraryItem({offset:RESIDUAL_POINTER_MAX_MS+1,duration:100_000});
+  item.state.timeWatched=100_000;
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("tiny pointer without Core watched-threshold evidence is preserved",async()=>{
+  const item=await libraryItem({offset:RESIDUAL_POINTER_MAX_MS-1,duration:100_000});
+  item.state.timeWatched=69_999;
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("future TBC season and unwatched ancillary Season 0 material do not block normal-series completion",async()=>{
+  const meta={id:"tt12345",type:"series",videos:[
+    ...videos(),
+    {id:"tt12345:0:1",season:0,episode:1,title:'Episode Insider "Finale"',released:"2026-01-16T00:00:00Z",runtime:"5min"},
+    {id:"tt12345:0:2",season:0,episode:2,title:"Inside Example Season 1",released:"2026-01-17T00:00:00Z",runtime:"25min"},
+    {id:"tt12345:4:1",season:4,episode:1,title:"TBC",released:"2027-01-01T00:00:00Z"}
+  ]};
+  const ordered=orderedVideos(meta),ids=ordered.map(v=>v.id);
+  const bits=ordered.map(v=>Number(v.season)>0&&Date.parse(v.released)<=NOW);
+  const item=await libraryItem({offset:900,duration:1000});
+  item.state.watched=await encode(bits,ids);
+  item.state.video_id="tt12345:1:3";
+  assert.ok(await completionDecision(item,meta,NOW));
+});
+
+test("released unwatched future-season placeholder becomes completion-relevant once its date arrives",async()=>{
+  const meta={id:"tt12345",type:"series",videos:[
+    ...videos(),
+    {id:"tt12345:4:1",season:4,episode:1,title:"TBC",released:"2026-09-01T00:00:00Z"}
+  ]};
+  const ordered=orderedVideos(meta),ids=ordered.map(v=>v.id);
+  const item=await libraryItem({offset:900,duration:1000});
+  item.state.watched=await encode(ordered.map(v=>v.id!=="tt12345:4:1"),ids);
+  item.state.video_id="tt12345:1:3";
+  assert.equal(await completionDecision(item,meta,NOW),null);
+});
+
 test("batch selection is deterministic and bounded",async()=>{
   const rows=[];for(let i=0;i<29;i++){const x=await libraryItem();x._id="tt"+String(10000+i);rows.push(x);}
   const seen=new Set(),count=Math.ceil(rows.length/BATCH_SIZE);
@@ -154,4 +219,37 @@ test("scheduled movie cleanup does not depend on metadata service",async()=>{
   assert.equal(s.verifiedWrites,1);
   assert.equal(f.row.state.timeOffset,0);
   assert.equal(db.rows.length,1);
+});
+
+
+test("removed temporary TMDB alias is cleared only when an exact canonical IMDb counterpart exists",async()=>{
+  const canonical=await libraryItem();
+  canonical._id="tt2374744";canonical.name="The Next Step";canonical.state.video_id="tt2374744:2:24";
+  const alias=structuredClone(canonical);
+  alias._id="tmdb:62404";alias.removed=true;alias.temp=true;alias._mtime=new Date(NOW-QUIET_MS-1000).toISOString();
+  const byId=new Map([[canonical._id,canonical],[alias._id,alias]]);
+  const d=legacyAliasDecision(alias,byId,NOW);
+  assert.equal(d?.canonicalId,"tt2374744");
+  assert.equal(d?.reason,"legacy-tmdb-alias-stale-progress");
+});
+
+test("alias cleanup rejects mismatched names, missing canonical item and active recent alias",async()=>{
+  const canonical=await libraryItem();canonical._id="tt2374744";canonical.name="The Next Step";canonical.state.video_id="tt2374744:2:24";
+  const alias=structuredClone(canonical);alias._id="tmdb:62404";alias.removed=true;alias.temp=true;
+  let byId=new Map([[canonical._id,canonical],[alias._id,alias]]);
+  alias.name="Different";assert.equal(legacyAliasDecision(alias,byId,NOW),null);
+  alias.name="The Next Step";byId=new Map([[alias._id,alias]]);assert.equal(legacyAliasDecision(alias,byId,NOW),null);
+  byId=new Map([[canonical._id,canonical],[alias._id,alias]]);alias._mtime=new Date(NOW-5*60*1000).toISOString();alias.state.lastWatched=alias._mtime;
+  assert.equal(legacyAliasDecision(alias,byId,NOW),null);
+});
+
+test("active duplicate alias is cleared only for identical progress or stale near-zero progress",async()=>{
+  const canonical=await libraryItem();canonical._id="tt1864017";canonical.name="Stella";canonical.state.video_id="tt1864017:2:1";canonical._mtime=new Date(NOW-QUIET_MS).toISOString();
+  const alias=structuredClone(canonical);alias._id="tmdb:39367";alias._mtime=new Date(NOW-QUIET_MS*2).toISOString();alias.state.lastWatched=alias._mtime;
+  let byId=new Map([[canonical._id,canonical],[alias._id,alias]]);
+  assert.ok(legacyAliasDecision(alias,byId,NOW));
+  alias.state.timeOffset=400;canonical.state.timeOffset=900;alias.state.video_id="tt1864017:1:1";
+  assert.ok(legacyAliasDecision(alias,byId,NOW));
+  alias.state.timeOffset=5000;
+  assert.equal(legacyAliasDecision(alias,byId,NOW),null);
 });

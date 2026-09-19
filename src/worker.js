@@ -5,6 +5,7 @@ const MAX_WRITES=2;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
+const RESIDUAL_POINTER_MAX_MS=15_000;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
 
@@ -107,12 +108,37 @@ function activityTime(item){
   const values=[Date.parse(item?._mtime||""),Date.parse(item?.state?.lastWatched||"")].filter(Number.isFinite);
   return values.length?Math.max(...values):0;
 }
+function playbackActivityTime(item){
+  const lastWatched=Date.parse(item?.state?.lastWatched||"");
+  if(Number.isFinite(lastWatched))return lastWatched;
+  const modified=Date.parse(item?._mtime||"");
+  return Number.isFinite(modified)?modified:0;
+}
+function normalizedName(value){return String(value||"").normalize("NFKC").trim().replace(/\s+/g," ").toLowerCase();}
+function canonicalIdFromVideoId(value){const m=String(value||"").match(/^(tt\d{5,12})(?::|$)/);return m?m[1]:null;}
+function legacyAliasDecision(item,byId,now){
+  if(!item||!String(item._id||"").startsWith("tmdb:")||!(["series","movie"].includes(item.type)))return null;
+  if(!(Number(item.state?.timeOffset)>0)||now-playbackActivityTime(item)<QUIET_MS)return null;
+  const canonicalId=canonicalIdFromVideoId(item.state?.video_id);if(!canonicalId)return null;
+  const canonicalItem=byId.get(canonicalId);if(!canonicalItem||canonicalItem.type!==item.type)return null;
+  if(canonicalItem.removed||canonicalItem.temp)return null;
+  if(normalizedName(canonicalItem.name)!==normalizedName(item.name))return null;
+  let safe=false;
+  if(item.removed&&item.temp)safe=true;
+  const samePointer=String(canonicalItem.state?.video_id||"")===String(item.state?.video_id||"");
+  const sameOffset=Number(canonicalItem.state?.timeOffset)===Number(item.state?.timeOffset);
+  const sameDuration=Number(canonicalItem.state?.duration)===Number(item.state?.duration);
+  if(!safe&&samePointer&&sameOffset&&sameDuration&&activityTime(canonicalItem)>=activityTime(item))safe=true;
+  if(!safe&&Number(item.state?.timeOffset)<=1000&&activityTime(canonicalItem)>activityTime(item)&&Number(canonicalItem.state?.timeOffset)>=Number(item.state?.timeOffset))safe=true;
+  if(!safe)return null;
+  return {id:item._id,before:structuredClone(item),reason:"legacy-tmdb-alias-stale-progress",canonicalId};
+}
 async function completionDecision(item,meta,now){
   if(!item||!["series","movie"].includes(item.type))return null;
   if(item.removed&&!item.temp)return null;
   const state=item.state||{};
   if(!(Number(state.timeOffset)>0)||!(Number(state.duration)>0))return null;
-  if(now-activityTime(item)<QUIET_MS)return null;
+  if(now-playbackActivityTime(item)<QUIET_MS)return null;
 
   if(item.type==="movie"){
     if(Number(state.flaggedWatched)!==1)return null;
@@ -122,7 +148,6 @@ async function completionDecision(item,meta,now){
   }
 
   if(!/^tt\d{5,12}$/.test(item._id))return null;
-  if(Number(state.timeOffset)/Number(state.duration)<WATCHED_THRESHOLD)return null;
   if(Number(state.flaggedWatched)!==1)return null;
   const videos=orderedVideos(meta);assert(videos.length>0,"EPISODE_LIST_EMPTY");
   const ids=videos.map(v=>String(v.id));
@@ -135,7 +160,15 @@ async function completionDecision(item,meta,now){
   const last=released.at(-1);
   if(String(state.video_id||"")!==String(last.v.id))return null;
   if(bits[last.i]!==true)return null;
-  return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-stale-progress"};
+  const offsetRatio=Number(state.timeOffset)/Number(state.duration);
+  if(offsetRatio>=WATCHED_THRESHOLD){
+    return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-stale-progress"};
+  }
+  const timeWatchedRatio=Number(state.timeWatched)/Number(state.duration);
+  if(Number(state.timeOffset)<=RESIDUAL_POINTER_MAX_MS&&timeWatchedRatio>=WATCHED_THRESHOLD){
+    return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-residual-progress"};
+  }
+  return null;
 }
 function selectBatch(items,scheduledTime){
   const candidates=items.filter(x=>["series","movie"].includes(x?.type)&&Number(x?.state?.timeOffset)>0&&!(x.removed&&!x.temp))
@@ -194,9 +227,11 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   assert(/^[0-9a-f]{64}$/i.test(env.EXPECTED_ACCOUNT_FINGERPRINT||""),"EXPECTED_ACCOUNT_REQUIRED");
   const expected=env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase();assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
-  const rows=await library(env,[],deps),batch=selectBatch(rows,scheduledTime),plans=[],errors=[];
+  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],errors=[];
   for(const item of batch.items){
     try{
+      const alias=legacyAliasDecision(item,byId,scheduledTime);
+      if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       const meta=item.type==="series"?await metadata(env,item._id):null;
       const d=await completionDecision(item,meta,scheduledTime);
       if(d){d.beforeHash=await hash(item);plans.push(d);}
@@ -213,4 +248,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,episodeInfo,orderedVideos,decodeWatched,completionDecision,selectBatch,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,episodeInfo,orderedVideos,decodeWatched,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,legacyAliasDecision,completionDecision,selectBatch,run,apply};
