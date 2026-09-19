@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedHash,videoHash,bulkWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,run
+  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -132,8 +132,10 @@ test("released unwatched future-season placeholder becomes completion-relevant o
   assert.equal(await completionDecision(item,meta,NOW),null);
 });
 
-async function transitionObservation(item,{changedAt=NOW-5*60*1000,offset=item.state.timeOffset,lastWatched=Date.parse(item.state.lastWatched||"")}={}){
-  return {watched_hash:await watchedHash(item),watched_changed_at:changedAt,time_offset_at_change:offset,video_hash_at_change:await videoHash(item),last_watched_at_change:Number.isFinite(lastWatched)?lastWatched:0,mtime_at_change:Date.parse(item._mtime||"")||0};
+async function transitionObservation(item,{changedAt=NOW-5*60*1000,offset=item.state.timeOffset,lastWatched=Date.parse(item.state.lastWatched||""),prev={}}={}){
+  const marker=await watchedHash(item),video=await videoHash(item),timeWatched=Number(item.state.timeWatched)||0,timesWatched=Number(item.state.timesWatched)||0,flagged=Number(item.state.flaggedWatched)||0,duration=Number(item.state.duration)||0,mtime=Date.parse(item._mtime||"")||0;
+  return {marker_hash:marker,changed_at:changedAt,time_offset:offset,time_watched:timeWatched,times_watched:timesWatched,flagged_watched:flagged,duration,video_hash:video,last_watched:Number.isFinite(lastWatched)?lastWatched:0,mtime,
+    prev_time_offset:prev.timeOffset??offset,prev_time_watched:prev.timeWatched??timeWatched,prev_times_watched:prev.timesWatched??timesWatched,prev_flagged_watched:prev.flaggedWatched??flagged,prev_duration:prev.duration??duration,prev_video_hash:prev.videoHash??video,prev_last_watched:prev.lastWatched??(Number.isFinite(lastWatched)?lastWatched:0),prev_mtime:prev.mtime??mtime};
 }
 test("bulk watched transition clears stale pointer even when current episode is not final",async()=>{
   const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:15_516,duration:120_000,flagged:0,mtime:NOW-2*24*60*60*1000});
@@ -167,6 +169,31 @@ test("bulk watched transition ignores future episode but blocks once that episod
   assert.equal(await bulkWatchedTransitionDecision(item,meta,obs,NOW),null);
 });
 
+function movieTransitionItem({timesWatched=1,offset=342_284,timeWatched=6_698_015,duration=6_923_626,flagged=1,lastWatched=NOW-5*60*1000,mtime=NOW-5*60*1000}={}){
+  return {_id:"tt0367594",type:"movie",name:"Example Movie",removed:false,temp:false,_mtime:new Date(mtime).toISOString(),state:{lastWatched:new Date(lastWatched).toISOString(),timeWatched,timeOffset:offset,overallTimeWatched:timeWatched,timesWatched,flaggedWatched:flagged,duration,video_id:"tt0367594",watched:"undefined:1:eJwDAAAAAAE=",noNotif:false},poster:null,posterShape:"poster",behaviorHints:{}};
+}
+test("explicit movie mark-watched transition clears stale resume without seeking to end",async()=>{
+  const item=movieTransitionItem({timesWatched:2});
+  const obs=await transitionObservation(item,{changedAt:NOW-2*60*1000,prev:{timeOffset:item.state.timeOffset,timeWatched:item.state.timeWatched,timesWatched:1,flaggedWatched:item.state.flaggedWatched,duration:item.state.duration,videoHash:await videoHash(item),lastWatched:NOW-24*60*60*1000,mtime:NOW-24*60*60*1000},lastWatched:NOW-2*60*1000});
+  const d=await movieMarkedWatchedTransitionDecision(item,obs,NOW);
+  assert.equal(d?.reason,"explicit-movie-mark-watched-stale-progress");
+});
+test("movie watched status and resume progress remain distinct after a later rewatch",async()=>{
+  const item=movieTransitionItem({timesWatched:2,offset:600_000,timeWatched:6_900_000,lastWatched:NOW-5*60*1000,mtime:NOW-5*60*1000});
+  const obs=await transitionObservation(item,{changedAt:NOW-20*60*1000,prev:{timeOffset:342_284,timeWatched:6_698_015,timesWatched:1,flaggedWatched:1,duration:item.state.duration,videoHash:await videoHash(item),lastWatched:NOW-24*60*60*1000,mtime:NOW-24*60*60*1000},lastWatched:NOW-5*60*1000});
+  assert.equal(await movieMarkedWatchedTransitionDecision(item,obs,NOW),null);
+});
+test("automatic movie threshold transition is not mistaken for explicit mark watched",async()=>{
+  const item=movieTransitionItem({timesWatched:1,offset:5_000_000,timeWatched:5_000_000,flagged:1,lastWatched:NOW-2*60*1000,mtime:NOW-2*60*1000});
+  const obs=await transitionObservation(item,{changedAt:NOW-2*60*1000,prev:{timeOffset:4_800_000,timeWatched:4_800_000,timesWatched:0,flaggedWatched:0,duration:item.state.duration,videoHash:await videoHash(item),lastWatched:NOW-12*60*1000,mtime:NOW-12*60*1000},lastWatched:NOW-2*60*1000});
+  assert.equal(await movieMarkedWatchedTransitionDecision(item,obs,NOW),null);
+});
+test("historical/external watched sync does not clear an active resume pointer",async()=>{
+  const item=movieTransitionItem({timesWatched:1,lastWatched:NOW-7*24*60*60*1000,mtime:NOW-2*60*1000});
+  const obs=await transitionObservation(item,{changedAt:NOW-2*60*1000,prev:{timeOffset:item.state.timeOffset,timeWatched:item.state.timeWatched,timesWatched:0,flaggedWatched:item.state.flaggedWatched,duration:item.state.duration,videoHash:await videoHash(item),lastWatched:NOW-7*24*60*60*1000,mtime:NOW-24*60*60*1000},lastWatched:NOW-7*24*60*60*1000});
+  assert.equal(await movieMarkedWatchedTransitionDecision(item,obs,NOW),null);
+});
+
 test("batch selection is deterministic and bounded",async()=>{
   const rows=[];for(let i=0;i<29;i++){const x=await libraryItem();x._id="tt"+String(10000+i);rows.push(x);}
   const seen=new Set(),count=Math.ceil(rows.length/BATCH_SIZE);
@@ -179,20 +206,20 @@ class DB{
     const self=this;
     return{
       async all(){
-        if(sql.startsWith("SELECT item_hash"))return{results:[...self.observations.values()].map(x=>({...x}))};
+        if(sql.startsWith("SELECT * FROM watch_observations_v2"))return{results:[...self.observations.values()].map(x=>({...x}))};
         throw new Error("sql-all");
       },
       bind(...args){return{async run(){
         if(sql.startsWith("INSERT INTO watch_backups")){self.rows.push(args);return{success:true};}
         if(sql.startsWith("DELETE"))return{success:true};
         if(sql.startsWith("INSERT INTO maintenance_state")){self.state=args;return{success:true};}
-        if(sql.startsWith("INSERT INTO watch_observations")){
-          const [item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change]=args;
-          self.observations.set(item_hash,{item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change});return{success:true};
+        if(sql.startsWith("INSERT INTO watch_observations_v2")){
+          const [item_hash,media_type,marker_hash,changed_at,time_offset,time_watched,times_watched,flagged_watched,duration,video_hash,last_watched,mtime,prev_time_offset,prev_time_watched,prev_times_watched,prev_flagged_watched,prev_duration,prev_video_hash,prev_last_watched,prev_mtime]=args;
+          self.observations.set(item_hash,{item_hash,media_type,marker_hash,changed_at,time_offset,time_watched,times_watched,flagged_watched,duration,video_hash,last_watched,mtime,prev_time_offset,prev_time_watched,prev_times_watched,prev_flagged_watched,prev_duration,prev_video_hash,prev_last_watched,prev_mtime});return{success:true};
         }
-        if(sql.startsWith("UPDATE watch_observations")){
-          const [watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change,item_hash]=args;
-          self.observations.set(item_hash,{item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change});return{success:true};
+        if(sql.startsWith("UPDATE watch_observations_v2")){
+          const [media_type,marker_hash,changed_at,time_offset,time_watched,times_watched,flagged_watched,duration,video_hash,last_watched,mtime,prev_time_offset,prev_time_watched,prev_times_watched,prev_flagged_watched,prev_duration,prev_video_hash,prev_last_watched,prev_mtime,item_hash]=args;
+          self.observations.set(item_hash,{item_hash,media_type,marker_hash,changed_at,time_offset,time_watched,times_watched,flagged_watched,duration,video_hash,last_watched,mtime,prev_time_offset,prev_time_watched,prev_times_watched,prev_flagged_watched,prev_duration,prev_video_hash,prev_last_watched,prev_mtime});return{success:true};
         }
         throw new Error("sql");
       }}}
@@ -236,6 +263,17 @@ test("observed watched-field transition clears stale pointer from explicit bulk 
   const second=await run(env,NOW+10*60_000,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW+10*60_000});
   assert.equal(second.verifiedWrites,1);assert.equal(f.row.state.timeOffset,0);assert.equal(f.puts,1);
   assert.equal(db.rows.length,1);
+});
+
+test("observed explicit movie mark watched clears stale resume without faking end progress",async()=>{
+  const before=movieTransitionItem({timesWatched:0,offset:342_284,timeWatched:1_234_567,flagged:0,lastWatched:NOW-24*60*60*1000,mtime:NOW-24*60*60*1000});
+  const f=fixture(before),db=new DB(),env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding({})};
+  const first=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(first.verifiedWrites,0);assert.equal(f.row.state.timeOffset,342_284);
+  const changed=structuredClone(f.row);changed.state.timesWatched=1;changed.state.lastWatched=new Date(NOW+5*60_000).toISOString();changed._mtime=new Date(NOW+5*60_000).toISOString();f.replaceRow(changed);
+  const second=await run(env,NOW+10*60_000,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW+10*60_000});
+  assert.equal(second.verifiedWrites,1);assert.equal(f.row.state.timeOffset,0);assert.equal(f.puts,1);
+  assert.equal(f.row.state.timeWatched,1_234_567);assert.equal(f.row.state.timesWatched,1);assert.equal(db.rows.length,1);
 });
 
 test("hard write cap is enforced",async()=>{

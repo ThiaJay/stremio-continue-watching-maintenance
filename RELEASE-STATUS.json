@@ -1,6 +1,6 @@
 {
   "product": "Continue Watching Maintenance for Stremio",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "status": "ACTIVE_PUBLIC_HOSTED",
   "classification": "hosted-maintenance",
   "normalMode": "private scheduled maintenance",
@@ -9,7 +9,7 @@
   "batchSize": 8,
   "maxWritesPerRun": 2,
   "deterministicTests": {
-    "passed": 32,
+    "passed": 37,
     "failed": 0
   },
   "hostedBackupExportVerified": true,
@@ -36,6 +36,18 @@
     "unrelatedStateChanges": 0,
     "encryptedHostedBackup": true
   },
-  "deployedWorkerVersion": "8e2bd344-d727-4ddf-88c0-2a7955103018",
-  "observationBaselineSeries": 42
+  "deployedWorkerVersion": "b2103e77-0445-45ec-8b1b-1e00d24143d3",
+  "observationBaselineSeries": 42,
+  "explicitMovieWatchedTransitionCleanup": true,
+  "watchedResumeSemanticSplit": "watched=historical completion; timeOffset=current resume session",
+  "movieTransitionEvidence": "timesWatched +1 with unchanged timeOffset/timeWatched/duration/video/flaggedWatched; recent lastWatched required",
+  "observationSchema": "watch_observations_v2 privacy-safe hashed identity + numeric state only",
+  "charlieChocolateFactoryExplicitIntentProof": {
+    "verified": true,
+    "beforeOffset": 342284,
+    "afterOffset": 0,
+    "timesWatchedUnchangedByRepair": true,
+    "encryptedHostedBackup": true,
+    "unrelatedStateChanges": 0
+  }
 }

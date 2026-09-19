@@ -32,3 +32,26 @@ CREATE TABLE IF NOT EXISTS watch_observations (
   last_watched_at_change INTEGER NOT NULL,
   mtime_at_change INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS watch_observations_v2 (
+  item_hash TEXT PRIMARY KEY,
+  media_type TEXT NOT NULL,
+  marker_hash TEXT NOT NULL,
+  changed_at INTEGER NOT NULL,
+  time_offset INTEGER NOT NULL,
+  time_watched INTEGER NOT NULL,
+  times_watched INTEGER NOT NULL,
+  flagged_watched INTEGER NOT NULL,
+  duration INTEGER NOT NULL,
+  video_hash TEXT NOT NULL,
+  last_watched INTEGER NOT NULL,
+  mtime INTEGER NOT NULL,
+  prev_time_offset INTEGER NOT NULL,
+  prev_time_watched INTEGER NOT NULL,
+  prev_times_watched INTEGER NOT NULL,
+  prev_flagged_watched INTEGER NOT NULL,
+  prev_duration INTEGER NOT NULL,
+  prev_video_hash TEXT NOT NULL,
+  prev_last_watched INTEGER NOT NULL,
+  prev_mtime INTEGER NOT NULL
+);

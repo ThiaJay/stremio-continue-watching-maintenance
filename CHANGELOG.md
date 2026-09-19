@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 — 2026-09-19
+
+- Adds explicit-movie watched-transition handling so **Mark as watched** can clear stale Continue Watching progress without seeking to the end of the film.
+- Keeps watched history and current-session progress as distinct concepts: a later rewatch can create fresh progress normally.
+- Detects manual movie completion only when `timesWatched` increments while `timeOffset`, `timeWatched`, duration, video identity and automatic `flaggedWatched` state remain unchanged.
+- Rejects automatic playback-threshold changes, external/historical watched sync, active playback drift and any ambiguous transition.
+- Uses a privacy-safe v2 observation table containing only item/video/marker hashes plus numeric progress/timing evidence; no titles, raw media IDs or watched bitfields are stored.
+- Adds direct and end-to-end break tests for manual movie watched intent, later rewatches, automatic threshold completion and historical/external sync.
+- Deterministic suite expanded to **37/37**.
+- Charlie and the Chocolate Factory was repaired under explicit user-confirmed watched intent with encrypted hosted recovery evidence and exact-field readback.
+
 ## 1.3.0 — 2026-09-19
 
 - Adds privacy-safe watched-bitfield transition observation for canonical series with positive resume progress.
