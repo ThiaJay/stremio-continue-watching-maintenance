@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,orderedVideos,decodeWatched,legacyAliasDecision,completionDecision,selectBatch,run
+  BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedHash,videoHash,bulkWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -132,6 +132,41 @@ test("released unwatched future-season placeholder becomes completion-relevant o
   assert.equal(await completionDecision(item,meta,NOW),null);
 });
 
+async function transitionObservation(item,{changedAt=NOW-5*60*1000,offset=item.state.timeOffset,lastWatched=Date.parse(item.state.lastWatched||"")}={}){
+  return {watched_hash:await watchedHash(item),watched_changed_at:changedAt,time_offset_at_change:offset,video_hash_at_change:await videoHash(item),last_watched_at_change:Number.isFinite(lastWatched)?lastWatched:0,mtime_at_change:Date.parse(item._mtime||"")||0};
+}
+test("bulk watched transition clears stale pointer even when current episode is not final",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:15_516,duration:120_000,flagged:0,mtime:NOW-2*24*60*60*1000});
+  item.state.timeWatched=15_515;item.state.lastWatched=new Date(NOW-2*24*60*60*1000).toISOString();
+  const d=await bulkWatchedTransitionDecision(item,{id:"tt12345",type:"series",videos:videos()},await transitionObservation(item),NOW);
+  assert.equal(d?.reason,"all-released-watched-transition-stale-progress");
+});
+test("bulk watched baseline without a real watched-field transition is non-actionable",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:15_516,duration:120_000,flagged:0});
+  assert.equal(await bulkWatchedTransitionDecision(item,{id:"tt12345",type:"series",videos:videos()},await transitionObservation(item,{changedAt:0}),NOW),null);
+});
+test("bulk watched transition never clears active rewatch playback",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:15_516,duration:120_000,flagged:0,mtime:NOW-5*60*1000});
+  item.state.lastWatched=new Date(NOW-5*60*1000).toISOString();
+  assert.equal(await bulkWatchedTransitionDecision(item,{id:"tt12345",type:"series",videos:videos()},await transitionObservation(item),NOW),null);
+});
+test("bulk watched transition fails closed if playback pointer changed after watched mutation",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:15_516,duration:120_000,flagged:0});
+  const obs=await transitionObservation(item);item.state.timeOffset=20_000;
+  assert.equal(await bulkWatchedTransitionDecision(item,{id:"tt12345",type:"series",videos:videos()},obs,NOW),null);
+});
+test("bulk watched transition ignores future episode but blocks once that episode is released unwatched",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:15_516,duration:120_000,flagged:0,mtime:NOW-2*24*60*60*1000});
+  item.state.lastWatched=new Date(NOW-2*24*60*60*1000).toISOString();
+  const future={id:"tt12345:2:1",season:2,episode:1,released:new Date(NOW+BULK_WATCHED_TRANSITION_WINDOW_MS).toISOString()};
+  let meta={id:"tt12345",type:"series",videos:videos([future])},ids=orderedVideos(meta).map(v=>v.id);
+  item.state.watched=await encode([true,true,true,false],ids);
+  let obs=await transitionObservation(item);assert.ok(await bulkWatchedTransitionDecision(item,meta,obs,NOW));
+  const released={...future,released:new Date(NOW-60_000).toISOString()};meta={id:"tt12345",type:"series",videos:videos([released])};ids=orderedVideos(meta).map(v=>v.id);
+  item.state.watched=await encode([true,true,true,false],ids);obs=await transitionObservation(item);
+  assert.equal(await bulkWatchedTransitionDecision(item,meta,obs,NOW),null);
+});
+
 test("batch selection is deterministic and bounded",async()=>{
   const rows=[];for(let i=0;i<29;i++){const x=await libraryItem();x._id="tt"+String(10000+i);rows.push(x);}
   const seen=new Set(),count=Math.ceil(rows.length/BATCH_SIZE);
@@ -139,8 +174,30 @@ test("batch selection is deterministic and bounded",async()=>{
   assert.equal(seen.size,rows.length);
 });
 class DB{
-  constructor(){this.rows=[];this.state=[];}
-  prepare(sql){const self=this;return{bind(...args){return{async run(){if(sql.startsWith("INSERT INTO watch_backups")){self.rows.push(args);return{success:true};}if(sql.startsWith("DELETE"))return{success:true};if(sql.startsWith("INSERT INTO maintenance_state")){self.state=args;return{success:true};}throw new Error("sql");}}}};}
+  constructor(){this.rows=[];this.state=[];this.observations=new Map();}
+  prepare(sql){
+    const self=this;
+    return{
+      async all(){
+        if(sql.startsWith("SELECT item_hash"))return{results:[...self.observations.values()].map(x=>({...x}))};
+        throw new Error("sql-all");
+      },
+      bind(...args){return{async run(){
+        if(sql.startsWith("INSERT INTO watch_backups")){self.rows.push(args);return{success:true};}
+        if(sql.startsWith("DELETE"))return{success:true};
+        if(sql.startsWith("INSERT INTO maintenance_state")){self.state=args;return{success:true};}
+        if(sql.startsWith("INSERT INTO watch_observations")){
+          const [item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change]=args;
+          self.observations.set(item_hash,{item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change});return{success:true};
+        }
+        if(sql.startsWith("UPDATE watch_observations")){
+          const [watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change,item_hash]=args;
+          self.observations.set(item_hash,{item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change});return{success:true};
+        }
+        throw new Error("sql");
+      }}}
+    };
+  }
 }
 function metaBinding(meta){return{fetch:async r=>Response.json({meta})};}
 async function fingerprint(){
@@ -155,7 +212,7 @@ function fixture(initial){
     if(ep==="datastorePut"){puts++;row=structuredClone(body.changes[0]);return Response.json({result:{success:true}});}
     throw new Error(ep);
   };
-  return{fetchImpl,get row(){return row},get puts(){return puts},get reads(){return reads}};
+  return{fetchImpl,get row(){return row},replaceRow(next){row=structuredClone(next)},get puts(){return puts},get reads(){return reads}};
 }
 function key(){const b=new Uint8Array(32);crypto.getRandomValues(b);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 test("scheduled run clears only timeOffset and keeps watched history intact",async()=>{
@@ -166,6 +223,21 @@ test("scheduled run clears only timeOffset and keeps watched history intact",asy
   const a=structuredClone(before),b=structuredClone(f.row);delete a._mtime;delete b._mtime;delete a.state.timeOffset;delete b.state.timeOffset;
   assert.deepEqual(b,a);assert.equal(db.rows.length,1);
 });
+test("observed watched-field transition clears stale pointer from explicit bulk watched intent",async()=>{
+  const before=await libraryItem({pointer:"tt12345:1:2",bits:[true,false,false],offset:15_516,duration:120_000,flagged:0,mtime:NOW-QUIET_MS-60_000});
+  before.state.lastWatched=new Date(NOW-QUIET_MS-60_000).toISOString();
+  const f=fixture(before),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding(meta)};
+  const first=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(first.verifiedWrites,0);assert.equal(f.row.state.timeOffset,15_516);assert.equal(db.observations.size,1);
+  const changed=structuredClone(f.row),ids=videos().map(v=>v.id);
+  changed.state.watched=await encode([true,true,true],ids);changed._mtime=new Date(NOW+5*60_000).toISOString();
+  f.replaceRow(changed);
+  const second=await run(env,NOW+10*60_000,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW+10*60_000});
+  assert.equal(second.verifiedWrites,1);assert.equal(f.row.state.timeOffset,0);assert.equal(f.puts,1);
+  assert.equal(db.rows.length,1);
+});
+
 test("hard write cap is enforced",async()=>{
   const rows=[];for(let i=0;i<5;i++){const x=await libraryItem();x._id="tt"+String(12345+i);const ids=videos().map(v=>v.id.replace("tt12345",x._id));x.state.video_id=ids[2];x.state.watched=await encode([true,true,true],ids);rows.push(x);}
   let current=structuredClone(rows),puts=0;

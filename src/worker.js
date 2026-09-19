@@ -8,6 +8,7 @@ const CREDITS_THRESHOLD=0.9;
 const RESIDUAL_POINTER_MAX_MS=15_000;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
+const BULK_WATCHED_TRANSITION_WINDOW_MS=2*60*60*1000;
 
 class StateError extends Error{constructor(code){super(code);this.name="StateError";this.code=code;}}
 const assert=(x,code)=>{if(!x)throw new StateError(code);};
@@ -116,6 +117,47 @@ function playbackActivityTime(item){
 }
 function normalizedName(value){return String(value||"").normalize("NFKC").trim().replace(/\s+/g," ").toLowerCase();}
 function canonicalIdFromVideoId(value){const m=String(value||"").match(/^(tt\d{5,12})(?::|$)/);return m?m[1]:null;}
+async function observationKey(item){return (await sha256(String(item?._id||""))).slice(0,16);}
+async function watchedHash(item){return sha256(String(item?.state?.watched||""));}
+async function videoHash(item){return (await sha256(String(item?.state?.video_id||""))).slice(0,16);}
+async function observeWatchedChanges(env,items,when){
+  assert(env.BACKUP_DB?.prepare,"BACKUP_DB_REQUIRED");
+  const q=await env.BACKUP_DB.prepare("SELECT item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change FROM watch_observations").all();
+  const current=new Map((q?.results||[]).map(x=>[x.item_hash,x]));
+  const series=items.filter(x=>x?.type==="series"&&/^tt\d{5,12}$/.test(String(x._id||""))&&Number(x?.state?.timeOffset)>0&&!(x.removed&&!x.temp));
+  for(const item of series){
+    const itemHash=await observationKey(item),wHash=await watchedHash(item),vHash=await videoHash(item);
+    const lastWatched=Date.parse(item?.state?.lastWatched||""),mtime=Date.parse(item?._mtime||"");
+    const snapshot={item_hash:itemHash,watched_hash:wHash,watched_changed_at:0,time_offset_at_change:Number(item.state?.timeOffset)||0,video_hash_at_change:vHash,last_watched_at_change:Number.isFinite(lastWatched)?lastWatched:0,mtime_at_change:Number.isFinite(mtime)?mtime:0};
+    const previous=current.get(itemHash);
+    if(!previous){
+      await env.BACKUP_DB.prepare("INSERT INTO watch_observations (item_hash,watched_hash,watched_changed_at,time_offset_at_change,video_hash_at_change,last_watched_at_change,mtime_at_change) VALUES (?,?,?,?,?,?,?)").bind(itemHash,wHash,0,snapshot.time_offset_at_change,vHash,snapshot.last_watched_at_change,snapshot.mtime_at_change).run();
+      current.set(itemHash,snapshot);continue;
+    }
+    if(previous.watched_hash!==wHash){
+      snapshot.watched_changed_at=when;
+      await env.BACKUP_DB.prepare("UPDATE watch_observations SET watched_hash=?,watched_changed_at=?,time_offset_at_change=?,video_hash_at_change=?,last_watched_at_change=?,mtime_at_change=? WHERE item_hash=?").bind(wHash,when,snapshot.time_offset_at_change,vHash,snapshot.last_watched_at_change,snapshot.mtime_at_change,itemHash).run();
+      current.set(itemHash,snapshot);
+    }
+  }
+  return current;
+}
+async function bulkWatchedTransitionDecision(item,meta,observation,now){
+  if(!observation||!(Number(observation.watched_changed_at)>0)||now-Number(observation.watched_changed_at)>BULK_WATCHED_TRANSITION_WINDOW_MS)return null;
+  if(!item||item.type!=="series"||!/^tt\d{5,12}$/.test(String(item._id||""))||!(Number(item.state?.timeOffset)>0))return null;
+  if(now-playbackActivityTime(item)<QUIET_MS)return null;
+  if(await watchedHash(item)!==observation.watched_hash||await videoHash(item)!==observation.video_hash_at_change)return null;
+  if(Number(item.state?.timeOffset)!==Number(observation.time_offset_at_change))return null;
+  if(Number(observation.last_watched_at_change)>0&&Number(observation.watched_changed_at)-Number(observation.last_watched_at_change)<QUIET_MS)return null;
+  const videos=orderedVideos(meta);assert(videos.length>0,"EPISODE_LIST_EMPTY");
+  const ids=videos.map(v=>String(v.id));assert(new Set(ids).size===ids.length,"DUPLICATE_VIDEO_ID");
+  const bits=await decodeWatched(item.state?.watched,ids);
+  const released=videos.map((v,i)=>({v,i,info:episodeInfo(v)})).filter(x=>x.info&&x.info.season>0&&(!x.v.released||Date.parse(x.v.released)<=now));
+  assert(released.length>0,"RELEASED_EPISODE_MAPPING_MISSING");
+  if(!released.every(({i})=>bits[i]===true))return null;
+  const pointerIndex=ids.indexOf(String(item.state?.video_id||""));if(pointerIndex<0||bits[pointerIndex]!==true)return null;
+  return {id:item._id,before:structuredClone(item),reason:"all-released-watched-transition-stale-progress"};
+}
 function legacyAliasDecision(item,byId,now){
   if(!item||!String(item._id||"").startsWith("tmdb:")||!(["series","movie"].includes(item.type)))return null;
   if(!(Number(item.state?.timeOffset)>0)||now-playbackActivityTime(item)<QUIET_MS)return null;
@@ -228,11 +270,17 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   const expected=env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase();assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
   const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],errors=[];
+  let observations=new Map();
+  try{observations=await observeWatchedChanges(env,rows,scheduledTime);}catch(e){errors.push(e?.code||"OBSERVATION_FAILED");}
   for(const item of batch.items){
     try{
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       const meta=item.type==="series"?await metadata(env,item._id):null;
+      if(item.type==="series"){
+        const transition=await bulkWatchedTransitionDecision(item,meta,observations.get(await observationKey(item)),scheduledTime);
+        if(transition){transition.beforeHash=await hash(item);plans.push(transition);continue;}
+      }
       const d=await completionDecision(item,meta,scheduledTime);
       if(d){d.beforeHash=await hash(item);plans.push(d);}
     }catch(e){errors.push(e?.code||"EVALUATION_FAILED");}
@@ -248,4 +296,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,episodeInfo,orderedVideos,decodeWatched,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,legacyAliasDecision,completionDecision,selectBatch,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,run,apply};

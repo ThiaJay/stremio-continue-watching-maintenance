@@ -22,3 +22,13 @@ CREATE TABLE IF NOT EXISTS maintenance_state (
   stopped INTEGER NOT NULL,
   error_codes TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS watch_observations (
+  item_hash TEXT PRIMARY KEY,
+  watched_hash TEXT NOT NULL,
+  watched_changed_at INTEGER NOT NULL,
+  time_offset_at_change INTEGER NOT NULL,
+  video_hash_at_change TEXT NOT NULL,
+  last_watched_at_change INTEGER NOT NULL,
+  mtime_at_change INTEGER NOT NULL
+);

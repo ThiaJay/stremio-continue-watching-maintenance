@@ -8,6 +8,8 @@ The scheduled Worker evaluates a bounded batch of movies and series with resume 
 
 The normal completed-series path preserves the existing conservative 70% resume-position rule. A second, narrower path handles the Stremio fringe case where a fully watched final episode is left with a tiny residual pointer near the beginning: the pointer must be **15 seconds or less**, Stremio Core's per-video `timeWatched` must independently prove the native 70% watched threshold, the final episode must be flagged watched and every currently released normal episode must be watched. Anything beyond that tiny residual window is preserved as a possible intentional rewatch.
 
+A separate transition-aware path handles explicit bulk watched intent. The Worker keeps only privacy-safe hashes and timing/progress snapshots for canonical series that currently have resume progress. If the watched bitfield changes from the previously observed state to a state where every released normal episode is watched, the playback pointer itself did not move during that watched-state change, the pointed episode is watched and playback was not recent, the stale `timeOffset` can be cleared even when it points to an older episode. This covers cases such as marking every season watched after an earlier rewatch without treating an already-watched rewatch as finished merely because its watched bits are still true. An initial observation is baseline-only and cannot trigger a correction.
+
 Playback recency is taken from `state.lastWatched` when it exists, because Stremio Core updates that field while playing. The LibraryItem `_mtime` is still used for concurrency protection, although unrelated account changes no longer make old playback look recent.
 
 Season 0 is deliberately outside this maintainer's completion authority. Panels, Episode Insider/aftershow material, behind-the-scenes programmes and similar extras therefore cannot keep an otherwise completed normal series stuck in Continue Watching. Narrative-special classification remains owned by Story Order; this maintainer does not mark any Season 0 item watched or rewrite its identity.
@@ -23,7 +25,8 @@ If a new normal-season episode becomes released later, that episode remains unwa
 This is a **hosted-maintenance** component. Normal operation is automatic on a private Cloudflare scheduled Worker every 10 minutes. It has no public HTTP control surface and requires no PC, startup task or local daemon.
 
 Each run is bounded:
-- deterministic batch of at most 8 eligible series;
+- privacy-safe watched-state observation across canonical series with positive resume progress; unchanged observations cause no D1 write and store no titles or raw media IDs;
+- deterministic metadata/evaluation batch of at most 8 eligible items;
 - maximum 2 account writes;
 - account fingerprint verification before evaluation and before mutation;
 - complete-record concurrency checks;
@@ -90,4 +93,4 @@ npm test
 npm run check
 ```
 
-The deterministic suite covers watched-bitfield decoding, completed-series qualification, future/TBC episodes, Season 0 ancillary material, residual-pointer cleanup, Stremio Core watch-time evidence, rewatch protection, playback-recency semantics, legacy-ID aliases, bounded batches, write caps, exact-field mutation and closure of the public HTTP surface.
+The deterministic suite covers watched-bitfield decoding, completed-series qualification, future/TBC episodes, Season 0 ancillary material, residual-pointer cleanup, Stremio Core watch-time evidence, transition-aware bulk-watched intent, active-rewatch preservation, playback-recency semantics, privacy-safe observation state, legacy-ID aliases, bounded batches, write caps, exact-field mutation and closure of the public HTTP surface.

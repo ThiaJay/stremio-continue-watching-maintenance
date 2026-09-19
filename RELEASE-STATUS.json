@@ -1,6 +1,6 @@
 {
   "product": "Continue Watching Maintenance for Stremio",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "status": "ACTIVE_PUBLIC_HOSTED",
   "classification": "hosted-maintenance",
   "normalMode": "private scheduled maintenance",
@@ -9,7 +9,7 @@
   "batchSize": 8,
   "maxWritesPerRun": 2,
   "deterministicTests": {
-    "passed": 26,
+    "passed": 32,
     "failed": 0
   },
   "hostedBackupExportVerified": true,
@@ -26,5 +26,16 @@
   "futureUnreleasedNormalEpisodesBlockCompletion": false,
   "releasedUnwatchedNormalEpisodesBlockCompletion": true,
   "seasonZeroAffectsNormalSeriesCompletion": false,
-  "deadCityAdversarialCases": 10
+  "deadCityAdversarialCases": 10,
+  "bulkWatchedTransitionCleanup": true,
+  "bulkWatchedTransitionWindowMs": 7200000,
+  "watchObservationPrivacy": "hashes and numeric timing/progress only; no titles/raw IDs/watched fields",
+  "footballersWivesExplicitIntentProof": {
+    "verified": true,
+    "watchedFieldUnchanged": true,
+    "unrelatedStateChanges": 0,
+    "encryptedHostedBackup": true
+  },
+  "deployedWorkerVersion": "8e2bd344-d727-4ddf-88c0-2a7955103018",
+  "observationBaselineSeries": 42
 }

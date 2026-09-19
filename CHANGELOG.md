@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 — 2026-09-19
+
+- Adds privacy-safe watched-bitfield transition observation for canonical series with positive resume progress.
+- A first observation is baseline-only and can never trigger an account write.
+- A subsequent watched-state change can clear stale progress only when every currently released normal episode is watched, the pointed episode is watched, the playback pointer did not move during the watched-state mutation and playback was not recent.
+- This closes the explicit bulk-watched fringe case where every season is marked watched after an earlier rewatch while preserving active or recently paused rewatches.
+- Observation storage contains only hashes and numeric timing/progress evidence; no titles, raw media IDs or watched bitfields are stored.
+- Adds fail-closed tests for baseline state, active rewatches, pointer drift, future/released episodes and an end-to-end two-run observed-transition cleanup.
+- Deterministic suite expanded to **32/32**.
+- Footballers' Wives was repaired under explicit current user intent with encrypted hosted recovery evidence, exact-field readback and watched history unchanged.
+
 ## 1.2.0 — 2026-09-19
 
 - Adds guarded cleanup for legacy `tmdb:` LibraryItem aliases that duplicate a canonical IMDb item in Continue Watching.
