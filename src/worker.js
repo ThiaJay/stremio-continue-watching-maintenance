@@ -357,7 +357,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
       if(fastPlanIds.has(item._id))continue;
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
-      const meta=item.type==="series"?await metadata(env,item._id):null,observation=observations.get(await observationKey(item));
+      const meta=item.type==="series"?await metadata(env,item,deps):null,observation=observations.get(await observationKey(item));
       if(item.type==="series"){
         const transition=await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime);
         if(transition){transition.beforeHash=await hash(item);plans.push(transition);continue;}
