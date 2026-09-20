@@ -344,6 +344,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   const fastPlanIds=new Set();
   for(const {item,observation} of explicitQueue){
     try{
+      if(item.type==="series"&&!watchedAnchor(item?.state?.watched))continue;
       const meta=item.type==="series"?await metadata(env,item,deps):null;
       const transition=item.type==="series"
         ?await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime)
@@ -358,6 +359,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       if(item.type==="series"&&!/^tt\d{5,12}$/.test(String(item._id||"")))continue;
+      if(item.type==="series"&&!watchedAnchor(item?.state?.watched))continue;
       const meta=item.type==="series"?await metadata(env,item,deps):null,observation=observations.get(await observationKey(item));
       if(item.type==="series"){
         const transition=await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime);

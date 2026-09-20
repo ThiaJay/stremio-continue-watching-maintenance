@@ -222,6 +222,35 @@ test("historical/external watched sync does not clear an active resume pointer",
   assert.equal(await movieMarkedWatchedTransitionDecision(item,obs,NOW),null);
 });
 
+test("canonical series without watched anchor evidence are skipped without metadata errors",async()=>{
+  const before=await libraryItem();
+  before.state.watched=null;
+  const f=fixture(before),db=new DB();
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:{fetch:async()=>{throw new Error("metadata should not be called");}}};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.verifiedWrites,0);
+  assert.equal(s.errorCodes.includes("META_WATCHED_ANCHOR_MISSING"),false);
+  assert.equal(f.puts,0);
+});
+
+test("explicit transition queue skips anchorless series before metadata evaluation",async()=>{
+  const before=await libraryItem();
+  before.state.watched=null;
+  const f=fixture(before),db=new DB(),itemHash=await observationKey(before);
+  db.observations.set(itemHash,{
+    item_hash:itemHash,
+    media_type:"series",
+    marker_hash:await watchedHash(before),
+    changed_at:NOW-60_000
+  });
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:{fetch:async()=>{throw new Error("metadata should not be called");}}};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.fastLaneScanned,1);
+  assert.equal(s.fastLaneCandidates,0);
+  assert.equal(s.errorCodes.includes("META_WATCHED_ANCHOR_MISSING"),false);
+  assert.equal(f.puts,0);
+});
+
 test("non-canonical series that cannot be safely aliased are skipped without metadata errors",async()=>{
   const before=await libraryItem();
   before._id="tmdb:999";

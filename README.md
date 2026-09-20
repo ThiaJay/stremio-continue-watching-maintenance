@@ -32,6 +32,8 @@ Series metadata is accepted only when it independently proves both the canonical
 
 Non-canonical series LibraryItems are evaluated only by the dedicated safe alias-reconciliation path. If no canonical mapping can be proved, they are skipped without attempting canonical series metadata evaluation or recording a false metadata error.
 
+Series whose optional Stremio watched field is absent are also skipped before metadata evaluation. Without that watched anchor there is no episode-level evidence that all released episodes are watched, so the maintainer does not infer completion and does not treat the absence as a runtime failure.
+
 Each run is bounded:
 - privacy-safe watched-state observation across canonical series with positive resume progress; unchanged observations cause no D1 write and store no titles or raw media IDs;
 - deterministic metadata/evaluation batch of at most 8 eligible items;
