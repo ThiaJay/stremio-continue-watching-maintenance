@@ -30,6 +30,8 @@ Explicit watched-state transitions have a separate bounded priority lane. Recent
 
 Series metadata is accepted only when it independently proves both the canonical IMDb identity and the exact episode anchor embedded in Stremio's watched bitfield. The configured AIOMetadata service binding remains the first source. If it cannot provide a trustworthy identity-and-anchor match, the Worker falls back to Stremio's native Cinemeta metadata and applies the same proof. A provider alias is accepted only when its explicit IMDb identity field matches the requested series and its video list contains the watched anchor. Ambiguous metadata still fails closed.
 
+Non-canonical series LibraryItems are evaluated only by the dedicated safe alias-reconciliation path. If no canonical mapping can be proved, they are skipped without attempting canonical series metadata evaluation or recording a false metadata error.
+
 Each run is bounded:
 - privacy-safe watched-state observation across canonical series with positive resume progress; unchanged observations cause no D1 write and store no titles or raw media IDs;
 - deterministic metadata/evaluation batch of at most 8 eligible items;
