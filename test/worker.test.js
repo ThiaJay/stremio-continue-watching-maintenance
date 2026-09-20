@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -30,6 +30,34 @@ async function libraryItem({pointer="tt12345:1:3",bits=[true,true,true],offset=9
     state:{lastWatched:new Date(mtime).toISOString(),timeWatched:0,timeOffset:offset,overallTimeWatched:3000,timesWatched:3,flaggedWatched:flagged,duration,video_id:pointer,watched:await encode(bits,ids),noNotif:false},
     poster:null,posterShape:"poster",behaviorHints:{}};
 }
+test("watched anchor is recovered from the serialized Stremio watched field",async()=>{
+  const ids=videos().map(v=>v.id),field=await encode([true,false,true],ids);
+  assert.equal(watchedAnchor(field),"tt12345:1:3");
+});
+
+test("metadata proof accepts an alternate provider id only when IMDb identity and watched anchor both match",()=>{
+  const meta={id:"tvdb:123",_imdbId:"tt12345",type:"series",videos:videos()};
+  assert.equal(metadataProof(meta,"tt12345","tt12345:1:3").ok,true);
+  assert.equal(metadataProof(meta,"tt12345","tt12345:9:9").code,"META_ANCHOR_MISMATCH");
+});
+
+test("metadata falls back to native Cinemeta only when it independently proves identity and watched anchor",async()=>{
+  const item=await libraryItem();
+  const wrong={id:"tvdb:999",_imdbId:"tt99999",type:"series",videos:[{id:"tt99999:1:1",season:1,episode:1}]};
+  const native={id:"tt12345",type:"series",videos:videos()};
+  const got=await metadata({METADATA:metaBinding(wrong)},item,{nativeMetaFetchImpl:async()=>Response.json({meta:native})});
+  assert.equal(got.id,"tt12345");
+});
+
+test("metadata fails closed when neither provider can prove the watched anchor",async()=>{
+  const item=await libraryItem();
+  const alias={id:"tvdb:123",_imdbId:"tt12345",type:"series",videos:[{id:"tt12345:9:9",season:9,episode:9}]};
+  await assert.rejects(
+    ()=>metadata({METADATA:metaBinding(alias)},item,{nativeMetaFetchImpl:async()=>Response.json({meta:{id:"tt12345",type:"series",videos:[{id:"tt12345:8:8",season:8,episode:8}]}})}),
+    e=>e?.code==="META_NO_TRUSTED_ANCHOR"
+  );
+});
+
 test("bitmap decoder round-trips current watched state",async()=>{
   const ids=videos().map(v=>v.id),field=await encode([true,false,true],ids);
   assert.deepEqual(await decodeWatched(field,ids),[true,false,true]);

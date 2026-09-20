@@ -28,6 +28,8 @@ This is a **hosted-maintenance** component. Normal operation is automatic on a p
 
 Explicit watched-state transitions have a separate bounded priority lane. Recent series or movie transitions detected by the privacy-safe observation state are evaluated before the rotating ordinary maintenance batch, oldest first. The priority lane evaluates at most 12 items and performs at most 6 verified writes per run, while ordinary cleanup retains its existing 2-write cap. This prevents a burst of Mark as Watched or Mark Season as Watched actions from ageing out of the two-hour evidence window merely because the corresponding item is not in that run's rotating batch.
 
+Series metadata is accepted only when it independently proves both the canonical IMDb identity and the exact episode anchor embedded in Stremio's watched bitfield. The configured AIOMetadata service binding remains the first source. If it cannot provide a trustworthy identity-and-anchor match, the Worker falls back to Stremio's native Cinemeta metadata and applies the same proof. A provider alias is accepted only when its explicit IMDb identity field matches the requested series and its video list contains the watched anchor. Ambiguous metadata still fails closed.
+
 Each run is bounded:
 - privacy-safe watched-state observation across canonical series with positive resume progress; unchanged observations cause no D1 write and store no titles or raw media IDs;
 - deterministic metadata/evaluation batch of at most 8 eligible items;
@@ -49,7 +51,9 @@ Each run is bounded:
 
 ## Cross-platform model
 
-The authority is the shared Stremio account plus the hosted Worker. No client-specific process is required, so the correction applies regardless of whether the account is used from Windows, macOS, Linux, Android, Android TV or another Stremio client.
+The authority is the shared Stremio account plus the hosted Worker. No client-specific process is required, so the correction applies regardless of whether the account is used from Windows, macOS, Linux, Android, Android TV, Fire TV or another Stremio client.
+
+The metadata identity repair is also device independent. Identity proof, watched-anchor validation and native Cinemeta fallback all run inside the hosted Worker. No local executable, browser extension, desktop service, operating-system API or per-device configuration is part of the production path.
 
 ## Self-hosting
 
