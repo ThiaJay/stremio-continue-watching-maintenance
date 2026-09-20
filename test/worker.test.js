@@ -222,6 +222,18 @@ test("historical/external watched sync does not clear an active resume pointer",
   assert.equal(await movieMarkedWatchedTransitionDecision(item,obs,NOW),null);
 });
 
+test("non-canonical series that cannot be safely aliased are skipped without metadata errors",async()=>{
+  const before=await libraryItem();
+  before._id="tmdb:999";
+  before.state.video_id="tmdb:999:1:3";
+  const f=fixture(before),db=new DB();
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:{fetch:async()=>{throw new Error("metadata should not be called");}}};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.verifiedWrites,0);
+  assert.equal(s.errorCodes.includes("META_CANONICAL_ID_REQUIRED"),false);
+  assert.equal(f.puts,0);
+});
+
 test("batch selection is deterministic and bounded",async()=>{
   const rows=[];for(let i=0;i<29;i++){const x=await libraryItem();x._id="tt"+String(10000+i);rows.push(x);}
   const seen=new Set(),count=Math.ceil(rows.length/BATCH_SIZE);
