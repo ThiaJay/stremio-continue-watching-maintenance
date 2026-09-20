@@ -51,7 +51,9 @@ Each run is bounded:
 
 ## Cross-platform model
 
-The authority is the shared Stremio account plus the hosted Worker. No client-specific process is required, so the correction applies regardless of whether the account is used from Windows, macOS, Linux, Android, Android TV or another Stremio client.
+The authority is the shared Stremio account plus the hosted Worker. No client-specific process is required, so the correction applies regardless of whether the account is used from Windows, macOS, Linux, Android, Android TV, Fire TV or another Stremio client.
+
+The metadata identity repair is also device independent. Identity proof, watched-anchor validation and native Cinemeta fallback all run inside the hosted Worker. No local executable, browser extension, desktop service, operating-system API or per-device configuration is part of the production path.
 
 ## Self-hosting
 
