@@ -99,13 +99,58 @@ async function decodeWatched(serialized,ids){
   const offset=length-1-anchorIndex;
   return ids.map((_,i)=>{const j=i+offset;return j>=0&&j<bytes.length*8&&(bytes[j>>3]&(1<<(j%8)))!==0;});
 }
-async function metadata(env,id){
-  assert(env.METADATA?.fetch,"METADATA_BINDING_REQUIRED");
-  const r=await env.METADATA.fetch(new Request(`https://watch-state-maintenance.internal/meta/series/${id}.json`,{headers:{accept:"application/json"}}));
-  assert(r.ok,"META_HTTP_"+r.status);
-  const payload=await boundedJson(r,8_000_000);
-  assert(payload?.meta?.id===id&&payload.meta.type==="series","META_IDENTITY_MISMATCH");
-  return payload.meta;
+function watchedAnchor(serialized){
+  if(typeof serialized!=="string"||!serialized)return null;
+  const parts=serialized.split(":");
+  if(parts.length<3)return null;
+  parts.pop();
+  const length=Number(parts.pop());
+  if(!Number.isInteger(length)||length<1)return null;
+  const anchor=parts.join(":");
+  return anchor||null;
+}
+function metadataProof(meta,id,anchor){
+  if(!meta||typeof meta!=="object")return {ok:false,code:"META_MISSING"};
+  if(meta.type!=="series")return {ok:false,code:"META_TYPE_MISMATCH"};
+  const identity=[meta.id,meta.imdb_id,meta._imdbId].filter(x=>typeof x==="string");
+  if(!identity.includes(id))return {ok:false,code:"META_IDENTITY_MISMATCH"};
+  if(!anchor)return {ok:false,code:"META_WATCHED_ANCHOR_MISSING"};
+  if(!Array.isArray(meta.videos)||!meta.videos.some(v=>String(v?.id||"")===anchor))return {ok:false,code:"META_ANCHOR_MISMATCH"};
+  return {ok:true,meta};
+}
+async function metadata(env,item,deps={}){
+  const id=String(item?._id||"");
+  assert(/^tt\d{5,12}$/.test(id),"META_CANONICAL_ID_REQUIRED");
+  const anchor=watchedAnchor(item?.state?.watched);
+  assert(anchor,"META_WATCHED_ANCHOR_MISSING");
+  const failures=[];
+
+  if(env.METADATA?.fetch){
+    try{
+      const r=await env.METADATA.fetch(new Request(`https://watch-state-maintenance.internal/meta/series/${id}.json`,{headers:{accept:"application/json"}}));
+      if(r.ok){
+        const payload=await boundedJson(r,8_000_000),proof=metadataProof(payload?.meta,id,anchor);
+        if(proof.ok)return proof.meta;
+        failures.push("BINDING_"+proof.code);
+      }else failures.push("BINDING_META_HTTP_"+r.status);
+    }catch(error){
+      failures.push(error instanceof StateError?"BINDING_"+error.code:"BINDING_META_FETCH_FAILED");
+    }
+  }else failures.push("BINDING_METADATA_UNAVAILABLE");
+
+  try{
+    const f=deps.nativeMetaFetchImpl||fetch;
+    const r=await f(`https://v3-cinemeta.strem.io/meta/series/${id}.json`,{headers:{accept:"application/json"},redirect:"manual",signal:AbortSignal.timeout(15000)});
+    if(r.status>=300&&r.status<400)throw new StateError("NATIVE_META_REDIRECT_BLOCKED");
+    if(!r.ok)throw new StateError("NATIVE_META_HTTP_"+r.status);
+    const payload=await boundedJson(r,8_000_000),proof=metadataProof(payload?.meta,id,anchor);
+    if(proof.ok)return proof.meta;
+    failures.push("NATIVE_"+proof.code);
+  }catch(error){
+    failures.push(error instanceof StateError?error.code:"NATIVE_META_FETCH_FAILED");
+  }
+
+  throw new StateError(failures.includes("NATIVE_META_ANCHOR_MISMATCH")?"META_NO_TRUSTED_ANCHOR":"META_NO_TRUSTED_MATCH");
 }
 function activityTime(item){
   const values=[Date.parse(item?._mtime||""),Date.parse(item?.state?.lastWatched||"")].filter(Number.isFinite);
@@ -299,7 +344,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   const fastPlanIds=new Set();
   for(const {item,observation} of explicitQueue){
     try{
-      const meta=item.type==="series"?await metadata(env,item._id):null;
+      const meta=item.type==="series"?await metadata(env,item,deps):null;
       const transition=item.type==="series"
         ?await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime)
         :await movieMarkedWatchedTransitionDecision(item,observation,scheduledTime);
@@ -354,4 +399,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run,apply};
