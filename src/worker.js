@@ -622,7 +622,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
 
   for(const item of batch.items){
     try{
-      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
+      if(fastPlanIds.has(item._id)||reportedPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       if(item.type==="series"&&!/^tt\d{5,12}$/.test(String(item._id||"")))continue;
