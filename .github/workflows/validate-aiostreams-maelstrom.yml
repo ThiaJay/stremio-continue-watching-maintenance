@@ -4,13 +4,15 @@ name: Validate AIOStreams Maelstrom hardening
 on:
   push:
     branches: [ops/stream-compatibility-inspect]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   validate:
-    if: github.event.head_commit.message == 'Validate AIOStreams Maelstrom hardening safely'
+    if: github.event_name == 'pull_request' || github.event.head_commit.message == 'Validate AIOStreams Maelstrom hardening safely'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
