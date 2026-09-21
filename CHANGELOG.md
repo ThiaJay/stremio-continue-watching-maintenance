@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.5 — 2026-09-21
+
+- Extends stale residual cleanup to an already watched older episode only when the series is otherwise completely watched and the residual is clearly ancient.
+- Requires the pointer episode itself to be watched, every released normal-season episode to be watched, both `timeOffset` and per-video `timeWatched` to be 15 seconds or less and playback inactivity of at least 30 days.
+- Preserves recent older-episode pointers as possible rewatches and preserves any older rewatch with meaningful per-video watch time.
+- Adds the exact live *Once Upon a Time in Northern Ireland* evidence where the 12.918 second stale pointer is on episode 1 rather than episode 5.
+- Keeps metadata identity, watched-anchor, encrypted backup, exact-field readback, write caps and concurrency protections unchanged.
+
 ## 1.6.4 — 2026-09-21
 
 - Adds a bounded stale-residual rule for a fully watched series whose final released episode is left with a tiny resume pointer of 15 seconds or less.
