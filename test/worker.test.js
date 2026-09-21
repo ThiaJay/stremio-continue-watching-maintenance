@@ -193,6 +193,20 @@ test("year-old 12.918 second final pointer for Once Upon a Time in Northern Irel
   assert.equal(d?.reason,"fully-watched-final-released-episode-stale-residual-progress");
 });
 
+test("stale tiny pointer never bypasses an unwatched released episode",async()=>{
+  const item=await libraryItem({bits:[true,true,false],offset:12_000,duration:100_000,mtime:NOW-2*RESIDUAL_STALE_MS});
+  item.state.timeWatched=12_000;
+  item.state.lastWatched=new Date(NOW-2*RESIDUAL_STALE_MS).toISOString();
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("stale tiny pointer on an older watched episode remains a possible rewatch",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",offset:12_000,duration:100_000,mtime:NOW-2*RESIDUAL_STALE_MS});
+  item.state.timeWatched=12_000;
+  item.state.lastWatched=new Date(NOW-2*RESIDUAL_STALE_MS).toISOString();
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
 test("recent tiny final pointer without Core watched-threshold evidence remains a possible rewatch",async()=>{
   const item=await libraryItem({offset:RESIDUAL_POINTER_MAX_MS-1,duration:100_000,mtime:NOW-QUIET_MS-1000});
   item.state.timeWatched=12_000;
