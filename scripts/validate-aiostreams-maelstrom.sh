@@ -53,12 +53,18 @@ printf 'source_decode\n' > validation-stage.txt
 python3 - <<'PY'
 from email.parser import BytesParser
 from email.policy import default
-import hashlib, os
+import hashlib, re
 headers=open("response-headers.txt","rb").read()
 body=open("worker-content.bin","rb").read()
-msg=BytesParser(policy=default).parsebytes(headers+b"\r\n"+body)
+matches=re.findall(br"(?im)^content-type:\s*([^\r\n]+)",headers)
+content_type=matches[-1].decode("latin1").strip() if matches else ""
 found=None
-if msg.is_multipart():
+if content_type.lower().startswith("multipart/"):
+    synthetic=("Content-Type: "+content_type+"\r\nMIME-Version: 1.0\r\n\r\n").encode("latin1")+body
+    msg=BytesParser(policy=default).parsebytes(synthetic)
+    if not msg.is_multipart():
+        open("validation-stage.txt","w",encoding="utf-8").write("source_multipart_parse_failed\n")
+        raise SystemExit("multipart response was not parsed")
     for p in msg.iter_parts():
         name=p.get_param("name", header="content-disposition") or p.get_filename() or ""
         if name=="worker.js":
