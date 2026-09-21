@@ -4,7 +4,7 @@ set -euo pipefail
 backupBody="$(node -e 'console.log(JSON.stringify({sql:"SELECT COUNT(*) AS c, MAX(created_at) AS latest FROM watch_backups WHERE item_hash = ? AND created_at >= ?",params:[process.env.TARGET_ITEM_HASH,Number(process.env.DEPLOYED_AT_MS)]}))')"
 backup="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data "$backupBody" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
 
-obsBody="$(node -e 'console.log(JSON.stringify({sql:"SELECT time_offset,time_watched,times_watched,flagged_watched,duration,last_watched,mtime,changed_at FROM watch_observations_v2 WHERE item_hash = ? LIMIT 1",params:[process.env.TARGET_ITEM_HASH]}))')"
+obsBody="$(node -e 'console.log(JSON.stringify({sql:"SELECT time_offset,time_watched,times_watched,flagged_watched,duration,last_watched,mtime,changed_at,marker_hash,video_hash FROM watch_observations_v2 WHERE item_hash = ? LIMIT 1",params:[process.env.TARGET_ITEM_HASH]}))')"
 obs="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data "$obsBody" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
 
 stateBody='{"sql":"SELECT last_run,continue_watching_series,batch_index,batch_count,scanned,candidates,attempted_writes,verified_writes,stopped,error_codes FROM maintenance_state WHERE state_key = ?","params":["latest"]}'
@@ -30,7 +30,9 @@ const safe={
     duration:Number(or.duration||0),
     last:Number(or.last_watched||0),
     mtime:Number(or.mtime||0),
-    changed:Number(or.changed_at||0)
+    changed:Number(or.changed_at||0),
+    marker:String(or.marker_hash||"").slice(0,16),
+    video:String(or.video_hash||"").slice(0,16)
   }:null,
   maintenance:{
     lastRun:Number(sr.last_run||0),
@@ -48,7 +50,7 @@ fs.writeFileSync("cw-diagnosis.json",JSON.stringify(safe,null,2)+"\n");
 const o2=safe.observation;
 const m=safe.maintenance;
 let context="cw-target_b"+safe.backups;
-context+=o2?"_off"+o2.offset+"_tw"+o2.watched+"_f"+o2.flag:"_obs-missing";
+context+=o2?"_off"+o2.offset+"_tw"+o2.watched+"_f"+o2.flag+"_vh"+o2.video+"_mh"+o2.marker:"_obs-missing";
 context+="_batch"+m.batch+"of"+m.batches+"_c"+m.candidates+"_v"+m.verified;
 fs.writeFileSync("cw-diagnosis-context.txt",context.slice(0,96)+"\n");
 console.log(JSON.stringify(safe));
