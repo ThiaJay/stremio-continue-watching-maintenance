@@ -1103,8 +1103,12 @@ jobs:
         run: |
           set -euo pipefail
           state=failure
-          context="continue-watching-reported-queue-failed"
-          description="Reported repair queue setup failed"
+          stage=unknown
+          if [ -f queue-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < queue-stage.txt | head -c 40)"
+          fi
+          context="continue-watching-reported-queue-failed-${stage}"
+          description="Reported repair queue setup failed at ${stage}"
           if [ "$QUEUE_STATUS" = "success" ]; then
             state=success
             context="continue-watching-reported-queue-ready"
