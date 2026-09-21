@@ -191,7 +191,13 @@ print("patch_applied")
 PY
 
 printf 'syntax_check\n' > validation-stage.txt
-node --check patched-worker.mjs
+if ! syntax_output="$(node --check patched-worker.mjs 2>&1)"; then
+  syntax_line="$(printf '%s\n' "$syntax_output" | sed -n 's/.*patched-worker\.mjs:\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+  if [ -z "$syntax_line" ]; then syntax_line="unknown"; fi
+  printf 'syntax_line_%s\n' "$syntax_line" > validation-stage.txt
+  printf '%s\n' "$syntax_output" >&2
+  exit 1
+fi
 
 printf 'regression_tests\n' > validation-stage.txt
 cat > validate.mjs <<'NODE'
