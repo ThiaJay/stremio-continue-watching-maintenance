@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,readbackMismatchCode,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,readbackMismatchCode,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -434,6 +434,37 @@ test("near-zero fast lane clears incomplete-series noise once and preserves watc
   assert.equal(f.row.state.watched,watchedBefore);
   assert.equal(f.row.state.timeWatched,31_035);
   assert.equal(db.rows.length,1);
+});
+
+test("expiring private reported repair secret accepts only valid future hashes",()=>{
+  const env={REPORTED_REPAIR_TARGETS:JSON.stringify({
+    expiresAt:NOW+60_000,
+    hashes:["0123456789abcdef","0123456789ABCDEF","bad","fedcba9876543210"]
+  })};
+  assert.deepEqual(secretReportedRepairHashes(env,NOW),["0123456789abcdef","fedcba9876543210"]);
+});
+
+test("expired or malformed reported repair secret is inert",()=>{
+  assert.deepEqual(secretReportedRepairHashes({REPORTED_REPAIR_TARGETS:JSON.stringify({expiresAt:NOW-1,hashes:["0123456789abcdef"]})},NOW),[]);
+  assert.deepEqual(secretReportedRepairHashes({REPORTED_REPAIR_TARGETS:"not-json"},NOW),[]);
+  assert.deepEqual(secretReportedRepairHashes({},NOW),[]);
+});
+
+test("reported repair loader combines private secret and D1 targets without duplicates",async()=>{
+  const env={
+    REPORTED_REPAIR_TARGETS:JSON.stringify({expiresAt:NOW+60_000,hashes:["0123456789abcdef"]}),
+    BACKUP_DB:{
+      prepare(){return{
+        bind(){return{
+          async all(){return{results:[
+            {item_hash:"0123456789abcdef"},
+            {item_hash:"fedcba9876543210"}
+          ]};}
+        };}
+      };}
+    }
+  };
+  assert.deepEqual(await loadReportedRepairHashes(env,NOW),["0123456789abcdef","fedcba9876543210"]);
 });
 
 test("reported issue selector matches only hashed targets and remains bounded",async()=>{

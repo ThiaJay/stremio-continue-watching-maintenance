@@ -353,16 +353,30 @@ async function selectExplicitTransitionItems(items,observations,scheduledTime){
   return candidates.slice(0,EXPLICIT_BATCH_SIZE);
 }
 
+function secretReportedRepairHashes(env,now){
+  const raw=String(env?.REPORTED_REPAIR_TARGETS||"").trim();
+  if(!raw)return [];
+  try{
+    const payload=JSON.parse(raw);
+    const expiresAt=Number(payload?.expiresAt);
+    if(!Number.isFinite(expiresAt)||expiresAt<now)return [];
+    const hashes=Array.isArray(payload?.hashes)?payload.hashes:[];
+    return [...new Set(hashes.map(x=>String(x||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))].slice(0,REPORTED_REPAIR_BATCH_SIZE);
+  }catch{return [];}
+}
 async function loadReportedRepairHashes(env,now,deps={}){
   if(Array.isArray(deps.reportedRepairHashes)){
     return [...new Set(deps.reportedRepairHashes.map(x=>String(x||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))].slice(0,REPORTED_REPAIR_BATCH_SIZE);
   }
-  if(!env.BACKUP_DB?.prepare)return [];
-  try{
-    const q=await env.BACKUP_DB.prepare("SELECT item_hash FROM repair_targets_v1 WHERE expires_at >= ? AND (last_attempt = 0 OR last_attempt <= ?) ORDER BY created_at ASC LIMIT ?")
-      .bind(now,now-REPORTED_REPAIR_RETRY_MS,REPORTED_REPAIR_BATCH_SIZE).all();
-    return [...new Set((q?.results||[]).map(x=>String(x.item_hash||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))];
-  }catch{return [];}
+  const combined=[...secretReportedRepairHashes(env,now)];
+  if(env.BACKUP_DB?.prepare){
+    try{
+      const q=await env.BACKUP_DB.prepare("SELECT item_hash FROM repair_targets_v1 WHERE expires_at >= ? AND (last_attempt = 0 OR last_attempt <= ?) ORDER BY created_at ASC LIMIT ?")
+        .bind(now,now-REPORTED_REPAIR_RETRY_MS,REPORTED_REPAIR_BATCH_SIZE).all();
+      combined.push(...(q?.results||[]).map(x=>String(x.item_hash||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)));
+    }catch{}
+  }
+  return [...new Set(combined)].slice(0,REPORTED_REPAIR_BATCH_SIZE);
 }
 async function selectReportedRepairItems(rows,targetHashes){
   const wanted=new Set(targetHashes),selected=[];
@@ -682,4 +696,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,REPORTED_REPAIR_RETRY_MS,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,REPORTED_REPAIR_RETRY_MS,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.2 — 2026-09-22
+
+- Adds an expiring private Worker secret as a fallback transport for the reported issue repair lane when direct D1 queue administration is unavailable.
+- The secret contains only short item hashes plus an expiry timestamp and becomes inert automatically after expiry.
+- Keeps the Worker source free of reported titles and item identities.
+- Combines any valid secret targets with the optional private D1 queue while deduplicating and preserving the existing bounded target count.
+- Does not change repair eligibility, priority ordering, the normal two write ceiling or any account write safety gate.
+- Adds deterministic coverage for valid future targets, expiry, malformed payloads and deduplication across secret and D1 sources.
+
 ## 1.7.1 — 2026-09-22
 
 - Adds a bounded privacy-safe reported issue lane for Continue Watching items that have been explicitly reported as visibly wrong.
