@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+printf "deployment_check\n" > cw-v166-acceptance-stage.txt
 for attempt in $(seq 1 30); do
   deployments="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/deployments")"
   active_id="$(node -e 'const x=JSON.parse(process.argv[1]);const ds=x.result?.deployments||x.result||[];const d=Array.isArray(ds)?ds[0]:null;if(!x.success||!d)process.exit(2);process.stdout.write(String(d.id||""))' "$deployments")"
@@ -9,14 +10,17 @@ for attempt in $(seq 1 30); do
     *) echo "::error::v1.6.6 is no longer the active deployment"; exit 2 ;;
   esac
 
+  printf "backup_query\n" > cw-v166-acceptance-stage.txt
   backup_body="$(node -e 'console.log(JSON.stringify({sql:"SELECT created_at,item_hash FROM watch_backups WHERE item_hash = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1",params:[process.env.TARGET_ITEM_HASH,Number(process.env.MIN_BACKUP_MS)]}))')"
   backup="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data "$backup_body" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
 
+  printf "state_query\n" > cw-v166-acceptance-stage.txt
   state_body='{"sql":"SELECT last_run,batch_index,batch_count,scanned,candidates,attempted_writes,verified_writes,stopped,error_codes FROM maintenance_state WHERE state_key = ?","params":["latest"]}'
   state="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data "$state_body" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
 
   found="$(node -e 'const x=JSON.parse(process.argv[1]);const r=x.result?.[0]?.results?.[0];if(!x.success)process.exit(2);if(r)process.stdout.write(JSON.stringify({created_at:Number(r.created_at)||0,item_hash:String(r.item_hash||"")}))' "$backup")"
   if [ -n "$found" ]; then
+    printf "verify\n" > cw-v166-acceptance-stage.txt
     node - <<'NODE' "$found" "$state"
 const fs=require("fs");
 const backup=JSON.parse(process.argv[2]);
@@ -54,10 +58,12 @@ fs.writeFileSync("cw-v166-acceptance.json",JSON.stringify({
   errorCodes:errors
 },null,2)+"\n");
 NODE
+    printf "passed\n" > cw-v166-acceptance-stage.txt
     echo "v1.6.6 exact-item acceptance passed"
     exit 0
   fi
 
+  printf "waiting_%s\n" "$attempt" > cw-v166-acceptance-stage.txt
   echo "target not yet repaired attempt $attempt"
   sleep 30
 done
