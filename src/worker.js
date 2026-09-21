@@ -243,7 +243,6 @@ async function completionDecision(item,meta,now){
   }
 
   if(!/^tt\d{5,12}$/.test(item._id))return null;
-  if(Number(state.flaggedWatched)!==1)return null;
   const videos=orderedVideos(meta);assert(videos.length>0,"EPISODE_LIST_EMPTY");
   const ids=videos.map(v=>String(v.id));
   assert(new Set(ids).size===ids.length,"DUPLICATE_VIDEO_ID");
