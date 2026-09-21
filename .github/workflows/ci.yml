@@ -25,7 +25,7 @@ jobs:
       - run: npm audit --audit-level=high
 
   validate_aiostreams_maelstrom:
-    if: github.event_name == 'pull_request' && github.head_ref == 'ops/stream-compatibility-inspect'
+    if: github.event_name == 'pull_request' && github.head_ref == 'ops/aiostreams-maelstrom-validation'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
