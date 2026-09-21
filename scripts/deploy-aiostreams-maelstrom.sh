@@ -80,9 +80,21 @@ const fs=require("fs");
 const x=JSON.parse(fs.readFileSync("content-response.json","utf8"));
 const http=String(process.env.CONTENT_HTTP_CODE||"unknown");
 if(!x.success){
-  const code=String(x.errors?.[0]?.code??"unknown").replace(/[^A-Za-z0-9]/g,"").slice(0,20);
-  fs.writeFileSync("deployment-stage.txt","content_put_http"+http+"_code"+code+"\n");
-  console.error("Cloudflare content update rejected",http,code);
+  const err=x.errors?.[0]||{};
+  const code=String(err.code??"unknown").replace(/[^A-Za-z0-9]/g,"").slice(0,20);
+  const raw=String(err.message||"");
+  const safe=raw
+    .replace(/https?:\/\/\S+/gi,"URL")
+    .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
+    .replace(/[^A-Za-z0-9 ]/g," ")
+    .replace(/\s+/g," ")
+    .trim()
+    .split(" ")
+    .slice(0,10)
+    .join("")
+    .slice(0,56) || "nomessage";
+  fs.writeFileSync("deployment-stage.txt","content_put_http"+http+"_code"+code+"_"+safe+"\n");
+  console.error("Cloudflare content update rejected",http,code,safe);
   process.exit(1);
 }
 if(!/^2\d\d$/.test(http)){
