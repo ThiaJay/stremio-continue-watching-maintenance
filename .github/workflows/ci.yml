@@ -55,7 +55,7 @@ jobs:
           fi
           export VALIDATION_STAGE=unknown
           if [ -f validation-stage.txt ]; then
-            export VALIDATION_STAGE="$(tr -cd 'A-Za-z0-9_-' < validation-stage.txt | head -c 40)"
+            export VALIDATION_STAGE="$(tr -cd 'A-Za-z0-9_-' < validation-stage.txt | head -c 60)"
           fi
           python3 - <<'PY'
           import json, os
