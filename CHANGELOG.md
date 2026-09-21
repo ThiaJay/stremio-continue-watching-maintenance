@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.0 — 2026-09-21
+
+- Adds a bounded near-zero resume fast lane for series and films whose positive `timeOffset` is no more than one second after the existing 30 minute playback quiet window.
+- Treats sub-second resume state as non-meaningful resume noise rather than inferring that the title or series is watched.
+- Does not require or alter a series watched bitmap, watched flag, `timeWatched`, `timesWatched` or video identity beyond requiring a valid existing video pointer.
+- Shares the existing normal two-write ceiling and retains encrypted pre-write backup, account fingerprint, second-read concurrency protection, bounded post-write confirmation and unrelated-state equality checks.
+- Adds adversarial regressions proving a quiet 167 ms pointer clears, recent sub-second playback remains, 1.001 second progress remains and overlap with the normal rotating batch still produces only one account write.
+- Retires the temporary hashed diagnostic targets used to establish the live rule boundary. The generic privacy-safe diagnostic engine remains dormant unless explicitly supplied targets in a future controlled build.
+
 ## 1.6.9 — 2026-09-21
 
 - Adds a bounded privacy-safe diagnostic lane for selected hashed Continue Watching items.
