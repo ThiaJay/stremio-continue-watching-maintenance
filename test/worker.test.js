@@ -355,7 +355,7 @@ test("historical/external watched sync does not clear an active resume pointer",
 });
 
 test("canonical series without watched anchor evidence are skipped without metadata errors",async()=>{
-  const before=await libraryItem();
+  const before=await libraryItem({offset:5_000});
   before.state.watched=null;
   const f=fixture(before),db=new DB();
   const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:{fetch:async()=>{throw new Error("metadata should not be called");}}};
@@ -366,7 +366,7 @@ test("canonical series without watched anchor evidence are skipped without metad
 });
 
 test("explicit transition queue skips anchorless series before metadata evaluation",async()=>{
-  const before=await libraryItem();
+  const before=await libraryItem({offset:5_000});
   before.state.watched=null;
   const f=fixture(before),db=new DB(),itemHash=await observationKey(before);
   db.observations.set(itemHash,{
@@ -384,7 +384,7 @@ test("explicit transition queue skips anchorless series before metadata evaluati
 });
 
 test("non-canonical series that cannot be safely aliased are skipped without metadata errors",async()=>{
-  const before=await libraryItem();
+  const before=await libraryItem({offset:5_000});
   before._id="tmdb:999";
   before.state.video_id="tmdb:999:1:3";
   const f=fixture(before),db=new DB();
