@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.9 — 2026-09-21
+
+- Adds a bounded privacy-safe diagnostic lane for selected hashed Continue Watching items.
+- Diagnostic targets live only in the private D1 store and expire automatically outside the worker code path.
+- Diagnostic results contain numeric progress, watched-state proof flags and decision reason codes only. Titles, raw media IDs, watched bitmaps and account credentials are not stored.
+- Diagnostics use the same trusted metadata, watched bitmap, alias and completion rules as maintenance while remaining non-blocking and non-mutating.
+- Adds deterministic coverage proving a completed watched series can be diagnosed without recording its raw identity and that absent targets are represented safely.
+
 ## 1.6.8 — 2026-09-21
 
 - Adds bounded post-write readback retries after an acknowledged Stremio datastore write so short account-consistency delays do not cause a false repair failure.
