@@ -67,9 +67,11 @@ if msg.is_multipart():
 else:
     found=body
 if found is None:
+    open("validation-stage.txt","w",encoding="utf-8").write("source_missing\n")
     raise SystemExit("worker.js not found")
 digest=hashlib.sha256(found).hexdigest()
 expected=os.environ["EXPECTED_SOURCE_SHA256"]
+open("validation-stage.txt","w",encoding="utf-8").write("sourcehash_"+digest[:16]+"\n")
 if digest != expected:
     raise SystemExit(f"source hash changed: {digest}")
 open("live-worker.mjs","wb").write(found)
