@@ -67,9 +67,11 @@ for(const r of safe){
   let context="cwex_"+r.hash+"_";
   if(!r.present)context+="obs0";
   else {
-    const lastAge=r.last>0?Math.floor((now-r.last)/86400000):-1;
-    const mtimeAge=r.mtime>0?Math.floor((now-r.mtime)/86400000):-1;
-    context+=["obs1","off"+r.offset,"tw"+r.watched,"dur"+r.duration,"f"+r.flag,"ld"+lastAge,"md"+mtimeAge,"b"+r.backups].join("_");
+    const lastAge=r.last>0?Math.floor((now-r.last)/60000):-1;
+    const mtimeAge=r.mtime>0?Math.floor((now-r.mtime)/60000):-1;
+    const changedAge=r.changed>0?Math.floor((now-r.changed)/60000):-1;
+    const backupAge=r.latestBackup>0?Math.floor((now-r.latestBackup)/60000):-1;
+    context+=["obs1","off"+r.offset,"tw"+r.watched,"dur"+r.duration,"f"+r.flag,"lm"+lastAge,"mm"+mtimeAge,"cm"+changedAge,"b"+r.backups,"bm"+backupAge].join("_");
   }
   fs.writeFileSync("cwex-"+r.hash+".txt",context.slice(0,120)+"\n");
 }
