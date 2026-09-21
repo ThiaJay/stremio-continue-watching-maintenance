@@ -345,3 +345,54 @@ jobs:
             --data @cw-v166-accept-status.json \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
 
+  deploy_continue_watching_v167:
+    permissions:
+      contents: read
+      statuses: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Deploy Continue Watching v1.6.7 safely'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SCRIPT_NAME: stremio-watch-state-maintenance
+      EXPECTED_SOURCE_COMMIT: 0bd19c7fe0740139d2253cf523a7d54506c580c8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Deploy exact Continue Watching v1.6.7 source
+        run: bash scripts/deploy-continue-watching-v1.6.7.sh
+      - name: Publish deployment status
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          state=failure
+          context="continue-watching-v167-deploy-failed"
+          description="Continue Watching v1.6.7 guarded deployment failed"
+          if [ "$DEPLOY_STATUS" = "success" ] && [ -f cw-v167-deployment-id.txt ] && [ -f cw-v167-source-hash.txt ]; then
+            state=success
+            short_id="$(tr -cd 'A-Za-z0-9' < cw-v167-deployment-id.txt | head -c 12)"
+            source_short="$(tr -cd '0-9a-f' < cw-v167-source-hash.txt | head -c 16)"
+            context="continue-watching-v167-deploy-${short_id}"
+            description="Verified v1.6.7 deployment source ${source_short}"
+          fi
+          python3 - <<PY
+          import json
+          open("cw-v167-deploy-status.json","w",encoding="utf-8").write(json.dumps({
+            "state":"$state",
+            "context":"$context",
+            "description":"$description"
+          }))
+          PY
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data @cw-v167-deploy-status.json \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+
