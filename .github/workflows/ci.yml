@@ -1344,3 +1344,109 @@ jobs:
             --data @cw-reported-secret-status.json \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
 
+  accept_continue_watching_v172:
+    permissions:
+      contents: read
+      statuses: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Accept Continue Watching v1.7.2 Breaking Bad'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+      SCRIPT_NAME: stremio-watch-state-maintenance
+      EXPECTED_DEPLOYMENT_PREFIX: 0e533a0e574d
+      TARGET_ITEM_HASH: c13774ae113c75c9
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for exact Breaking Bad cleanup
+        run: bash scripts/accept-continue-watching-v1.7.2.sh
+      - name: Publish Breaking Bad acceptance
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPT_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          state=failure
+          stage=unknown
+          if [ -f cw-v172-acceptance-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < cw-v172-acceptance-stage.txt | head -c 48)"
+          fi
+          context="continue-watching-v172-bb-acceptance-failed-${stage}"
+          description="Breaking Bad v1.7.2 acceptance failed at ${stage}"
+          if [ "$ACCEPT_STATUS" = "success" ] && [ -f cw-v172-acceptance.txt ]; then
+            state=success
+            context="$(tr -cd 'A-Za-z0-9_.-' < cw-v172-acceptance.txt | head -c 96)"
+            description="Breaking Bad v1.7.2 cleanup verified"
+          fi
+          python3 - <<PY
+          import json
+          open("cw-v172-bb-status.json","w",encoding="utf-8").write(json.dumps({
+            "state":"$state",
+            "context":"$context",
+            "description":"$description"
+          }))
+          PY
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data @cw-v172-bb-status.json \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+
+  accept_continue_watching_v172_northern_ireland:
+    permissions:
+      contents: read
+      statuses: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Accept Continue Watching v1.7.2 Northern Ireland'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+      SCRIPT_NAME: stremio-watch-state-maintenance
+      EXPECTED_DEPLOYMENT_PREFIX: 0e533a0e574d
+      TARGET_ITEM_HASH: d12921203e124b0e
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for exact Northern Ireland cleanup
+        run: bash scripts/accept-continue-watching-v1.7.2-northern-ireland.sh
+      - name: Publish Northern Ireland acceptance
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPT_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          state=failure
+          stage=unknown
+          if [ -f cw-v172-ni-acceptance-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < cw-v172-ni-acceptance-stage.txt | head -c 48)"
+          fi
+          context="continue-watching-v172-ni-acceptance-failed-${stage}"
+          description="Northern Ireland v1.7.2 acceptance failed at ${stage}"
+          if [ "$ACCEPT_STATUS" = "success" ] && [ -f cw-v172-ni-acceptance.txt ]; then
+            state=success
+            context="$(tr -cd 'A-Za-z0-9_.-' < cw-v172-ni-acceptance.txt | head -c 96)"
+            description="Northern Ireland v1.7.2 cleanup verified"
+          fi
+          python3 - <<PY
+          import json
+          open("cw-v172-ni-status.json","w",encoding="utf-8").write(json.dumps({
+            "state":"$state",
+            "context":"$context",
+            "description":"$description"
+          }))
+          PY
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data @cw-v172-ni-status.json \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+
