@@ -62,7 +62,7 @@ jobs:
           import json, os
           payload={
             "state":os.environ["STATUS_STATE"],
-            "context":"aiostreams-maelstrom-validation",
+            "context":"aiostreams-maelstrom-validation-"+os.environ["VALIDATION_STAGE"],
             "description":"Guarded validation "+os.environ["VALIDATION_STATUS"]+" at "+os.environ["VALIDATION_STAGE"]
           }
           open("validation-status.json","w",encoding="utf-8").write(json.dumps(payload))
