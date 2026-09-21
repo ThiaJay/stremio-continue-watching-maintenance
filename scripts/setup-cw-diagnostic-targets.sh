@@ -17,8 +17,10 @@ const failed=!x.success||(x.result||[]).some(r=>r.success===false)||!/^2\d\d$/.t
 if(failed){
   const e=x.errors?.[0]||x.result?.find?.(r=>r.success===false)?.error||{};
   const code=String(e.code??e).replace(/[^A-Za-z0-9]/g,"").slice(0,32)||"unknown";
+  const raw=String(e.message??e);
+  const safe=raw.replace(/https?:\/\/\S+/gi,"URL").replace(/[A-Fa-f0-9]{24,}/g,"HEX").replace(/[^A-Za-z0-9 ]/g," ").replace(/\s+/g," ").trim().split(" ").slice(0,8).join("").slice(0,48)||"nomessage";
   const stage=fs.readFileSync("cw-diagnostic-setup-stage.txt","utf8").trim().replace(/[^A-Za-z0-9_-]/g,"");
-  fs.writeFileSync("cw-diagnostic-setup-stage.txt",stage+"_http"+http+"_code"+code+"\n");
+  fs.writeFileSync("cw-diagnostic-setup-stage.txt",stage+"_http"+http+"_code"+code+"_"+safe+"\n");
   process.exit(3);
 }
 NODE
