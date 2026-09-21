@@ -985,3 +985,45 @@ jobs:
             --data @cw-v170-ni-status.json \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
 
+  diagnose_continue_watching_v170_receipts:
+    permissions:
+      contents: read
+      statuses: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Diagnose Continue Watching v1.7.0 receipts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+      SCRIPT_NAME: stremio-watch-state-maintenance
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read v1.7.0 post-deployment receipts
+        run: bash scripts/diagnose-v1.7.0-live-receipts.sh
+      - name: Publish receipt states
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for file in v170-bb.txt v170-ni.txt v170-maintenance.txt; do
+            [ -f "$file" ] || continue
+            context="$(tr -cd 'A-Za-z0-9_.-' < "$file" | head -c 96)"
+            python3 - <<PY
+          import json
+          open("v170-status.json","w",encoding="utf-8").write(json.dumps({
+            "state":"success",
+            "context":"$context",
+            "description":"Privacy-safe v1.7.0 live receipt state"
+          }))
+          PY
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              --data @v170-status.json \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+          done
+
