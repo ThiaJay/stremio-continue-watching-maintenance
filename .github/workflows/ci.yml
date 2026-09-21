@@ -1356,7 +1356,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
       SCRIPT_NAME: stremio-watch-state-maintenance
-      EXPECTED_DEPLOYMENT_PREFIX: 0e533a0e574d
+      EXPECTED_DEPLOYMENT_PREFIX: bc84b08545c9
       TARGET_ITEM_HASH: c13774ae113c75c9
     steps:
       - uses: actions/checkout@v7
@@ -1409,7 +1409,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
       SCRIPT_NAME: stremio-watch-state-maintenance
-      EXPECTED_DEPLOYMENT_PREFIX: 0e533a0e574d
+      EXPECTED_DEPLOYMENT_PREFIX: bc84b08545c9
       TARGET_ITEM_HASH: d12921203e124b0e
     steps:
       - uses: actions/checkout@v7
