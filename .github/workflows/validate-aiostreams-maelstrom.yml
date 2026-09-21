@@ -1,4 +1,5 @@
 name: Validate AIOStreams Maelstrom hardening
+# retrigger after workflow establishment
 
 on:
   push:
