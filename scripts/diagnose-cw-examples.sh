@@ -62,11 +62,16 @@ const safe=expected.map(hash=>{
   };
 });
 fs.writeFileSync("cw-example-diagnosis.json",JSON.stringify(safe,null,2)+"\n");
+const now=Date.now();
 for(const r of safe){
   let context="cwex_"+r.hash+"_";
   if(!r.present)context+="obs0";
-  else context+=["obs1","off"+r.offset,"tw"+r.watched,"f"+r.flag,"b"+r.backups].join("_");
-  fs.writeFileSync("cwex-"+r.hash+".txt",context.slice(0,96)+"\n");
+  else {
+    const lastAge=r.last>0?Math.floor((now-r.last)/86400000):-1;
+    const mtimeAge=r.mtime>0?Math.floor((now-r.mtime)/86400000):-1;
+    context+=["obs1","off"+r.offset,"tw"+r.watched,"dur"+r.duration,"f"+r.flag,"ld"+lastAge,"md"+mtimeAge,"b"+r.backups].join("_");
+  }
+  fs.writeFileSync("cwex-"+r.hash+".txt",context.slice(0,120)+"\n");
 }
 console.log(JSON.stringify(safe));
 NODE
