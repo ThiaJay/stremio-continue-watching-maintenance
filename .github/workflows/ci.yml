@@ -319,8 +319,12 @@ jobs:
         run: |
           set -euo pipefail
           state=failure
-          context="continue-watching-v166-acceptance-failed"
-          description="Exact-item v1.6.6 acceptance failed"
+          stage=unknown
+          if [ -f cw-v166-acceptance-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < cw-v166-acceptance-stage.txt | head -c 48)"
+          fi
+          context="continue-watching-v166-acceptance-failed-${stage}"
+          description="Exact-item v1.6.6 acceptance failed at ${stage}"
           if [ "$ACCEPT_STATUS" = "success" ] && [ -f cw-v166-acceptance.txt ]; then
             state=success
             context="$(tr -cd 'A-Za-z0-9_.-' < cw-v166-acceptance.txt | head -c 96)"
