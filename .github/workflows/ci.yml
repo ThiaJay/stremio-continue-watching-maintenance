@@ -174,8 +174,12 @@ jobs:
         run: |
           set -euo pipefail
           state=failure
-          context="aiostreams-maelstrom-deploy-failed"
-          description="Guarded adapter deployment failed"
+          stage=unknown
+          if [ -f deployment-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < deployment-stage.txt | head -c 40)"
+          fi
+          context="aiostreams-maelstrom-deploy-failed-${stage}"
+          description="Guarded adapter deployment failed at ${stage}"
           if [ "$DEPLOY_STATUS" = "success" ] && [ -f deployment-id.txt ] && [ -f deployed-source-hash.txt ]; then
             state=success
             short_id="$(tr -cd 'A-Za-z0-9' < deployment-id.txt | head -c 12)"
