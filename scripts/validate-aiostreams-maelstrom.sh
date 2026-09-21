@@ -4,6 +4,7 @@ set -euo pipefail
 printf 'production_contract\n' > validation-stage.txt
 settings="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
 node - <<'NODE' "$settings"
+const fs=require("fs");
 const x=JSON.parse(process.argv[2]);
 if(!x.success) process.exit(2);
 const actual=(x.result?.bindings||[])
@@ -15,12 +16,16 @@ const expected=[
   {name:"MAELSTROM_ROOT",type:"secret_text"},
   {name:"METADATA",type:"service"}
 ];
-if(JSON.stringify(actual)!==JSON.stringify(expected)) {
+const compatibilityDate=String(x.result?.compatibility_date||"");
+const bindingsOk=JSON.stringify(actual)===JSON.stringify(expected);
+const dateOk=compatibilityDate==="2026-09-18";
+fs.writeFileSync("validation-contract.json",JSON.stringify({actual,expected,compatibilityDate,bindingsOk,dateOk},null,2)+"\n");
+if(!bindingsOk) {
   console.error("binding contract changed");
   console.error(JSON.stringify(actual));
   process.exit(3);
 }
-if(String(x.result?.compatibility_date||"")!=="2026-09-18") {
+if(!dateOk) {
   console.error("compatibility date changed");
   process.exit(4);
 }
