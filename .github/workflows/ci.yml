@@ -674,8 +674,12 @@ jobs:
         run: |
           set -euo pipefail
           state=failure
-          context="cw-diagnostic-targets-failed"
-          description="Continue Watching diagnostic target setup failed"
+          stage=unknown
+          if [ -f cw-diagnostic-setup-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < cw-diagnostic-setup-stage.txt | head -c 64)"
+          fi
+          context="cw-diagnostic-targets-failed-${stage}"
+          description="Continue Watching diagnostic target setup failed at ${stage}"
           if [ "$SETUP_STATUS" = "success" ]; then
             state=success
             context="cw-diagnostic-targets-ready"
