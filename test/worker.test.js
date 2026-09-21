@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -162,6 +162,42 @@ test("recent unrelated mtime does not make old completed playback look active",a
 test("meaningful low-progress final-episode rewatch is preserved",async()=>{
   const item=await libraryItem({offset:RESIDUAL_POINTER_MAX_MS+1,duration:100_000});
   item.state.timeWatched=100_000;
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("year-old 12.918 second final pointer for Once Upon a Time in Northern Ireland is stale residue",async()=>{
+  const id="tt27837209";
+  const meta={id,type:"series",videos:[1,2,3,4,5].map((episode,index)=>({
+    id:`${id}:1:${episode}`,season:1,episode,released:new Date(Date.UTC(2023,4,22+index*7)).toISOString()
+  }))};
+  const ids=meta.videos.map(v=>v.id);
+  const item={
+    _id:id,type:"series",name:"Once Upon a Time in Northern Ireland",removed:false,temp:false,
+    _mtime:"2026-09-03T13:57:55.847Z",
+    state:{
+      lastWatched:"2025-09-23T21:33:05.000Z",
+      timeWatched:12_893,
+      timeOffset:12_918,
+      overallTimeWatched:0,
+      timesWatched:1,
+      flaggedWatched:0,
+      duration:4_509_040,
+      video_id:`${id}:1:5`,
+      watched:await encode([true,true,true,true,true],ids),
+      noNotif:false
+    },
+    poster:null,posterShape:"poster",behaviorHints:{}
+  };
+  assert.ok(NOW-playbackActivityTime(item)>=RESIDUAL_STALE_MS);
+  const d=await completionDecision(item,meta,NOW);
+  assert.equal(d?.reason,"fully-watched-final-released-episode-stale-residual-progress");
+});
+
+test("recent tiny final pointer without Core watched-threshold evidence remains a possible rewatch",async()=>{
+  const item=await libraryItem({offset:RESIDUAL_POINTER_MAX_MS-1,duration:100_000,mtime:NOW-QUIET_MS-1000});
+  item.state.timeWatched=12_000;
+  item.state.lastWatched=new Date(NOW-QUIET_MS-1000).toISOString();
+  assert.ok(NOW-playbackActivityTime(item)<RESIDUAL_STALE_MS);
   assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
 });
 
