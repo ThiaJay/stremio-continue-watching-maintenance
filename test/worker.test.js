@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,readbackMismatchCode,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -635,6 +635,48 @@ test("persistent unchanged readback remains fail closed after bounded retries",a
   assert.equal(f.postWriteReads,4);
   assert.equal(f.row.state.timeOffset,before.state.timeOffset);
   assert.equal(db.rows.length,1);
+});
+
+class DiagnosticDB{
+  constructor(){this.results=new Map();}
+  prepare(sql){
+    const self=this;
+    if(sql.startsWith("INSERT INTO diagnostic_results_v1")){
+      return{bind(item_hash,observed_at,payload){return{async run(){self.results.set(item_hash,{observed_at,payload});return{success:true};}}}};
+    }
+    throw new Error("diagnostic-sql");
+  }
+}
+
+test("privacy-safe targeted diagnostics prove watched completion without storing raw identity",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:12_000,duration:100_000,flagged:0,mtime:NOW-ANCIENT_RESIDUAL_STALE_MS-60_000});
+  item.state.timeWatched=11_900;
+  item.state.lastWatched=new Date(NOW-ANCIENT_RESIDUAL_STALE_MS-60_000).toISOString();
+  const keyHash=await observationKey(item);
+  const db=new DiagnosticDB();
+  const meta={id:"tt12345",type:"series",videos:videos()};
+  const env={BACKUP_DB:db,METADATA:metaBinding(meta)};
+  const written=await recordDiagnosticTargets(env,[item],new Map([[item._id,item]]),new Map(),NOW,{diagnosticTargets:[keyHash],skipDiagnosticSchema:true});
+  assert.equal(written,1);
+  const stored=db.results.get(keyHash);
+  assert.ok(stored);
+  const snapshot=JSON.parse(stored.payload);
+  assert.equal(snapshot.present,1);
+  assert.equal(snapshot.canonical,1);
+  assert.equal(snapshot.allReleasedWatched,1);
+  assert.equal(snapshot.pointerWatched,1);
+  assert.equal(snapshot.pointerFinal,0);
+  assert.equal(snapshot.ancientSelector,1);
+  assert.equal(snapshot.completionReason,"fully-watched-series-ancient-tiny-watched-episode-residual-progress");
+  assert.equal(stored.payload.includes("tt12345"),false);
+  assert.equal(stored.payload.includes("Example"),false);
+});
+
+test("privacy-safe targeted diagnostics record an absent target without account identity",async()=>{
+  const db=new DiagnosticDB();
+  const written=await recordDiagnosticTargets({BACKUP_DB:db},[],new Map(),new Map(),NOW,{diagnosticTargets:["0123456789abcdef"],skipDiagnosticSchema:true});
+  assert.equal(written,1);
+  assert.deepEqual(JSON.parse(db.results.get("0123456789abcdef").payload),{present:0});
 });
 
 function key(){const b=new Uint8Array(32);crypto.getRandomValues(b);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
