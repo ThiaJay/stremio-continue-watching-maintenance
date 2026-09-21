@@ -54,12 +54,16 @@ jobs:
           if [ "$VALIDATION_STATUS" = "success" ]; then
             export STATUS_STATE=success
           fi
+          export VALIDATION_STAGE=unknown
+          if [ -f validation-stage.txt ]; then
+            export VALIDATION_STAGE="$(tr -cd 'A-Za-z0-9_-' < validation-stage.txt | head -c 40)"
+          fi
           python3 - <<'PY'
           import json, os
           payload={
             "state":os.environ["STATUS_STATE"],
             "context":"aiostreams-maelstrom-validation",
-            "description":"Guarded adapter validation "+os.environ["VALIDATION_STATUS"]
+            "description":"Guarded validation "+os.environ["VALIDATION_STATUS"]+" at "+os.environ["VALIDATION_STAGE"]
           }
           open("validation-status.json","w",encoding="utf-8").write(json.dumps(payload))
           PY
