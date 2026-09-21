@@ -244,7 +244,15 @@ import fs from "node:fs";
 globalThis.crypto=globalThis.crypto||crypto.webcrypto;
 const mark=(name)=>fs.writeFileSync("validation-stage.txt","reg_"+name+"\n");
 
-const mod=await import("./patched-worker.mjs");
+mark("import");
+let mod;
+try{
+  mod=await import("./patched-worker.mjs");
+}catch(error){
+  const code=String(error?.code||error?.name||"unknown").replace(/[^A-Za-z0-9]/g,"").slice(0,24);
+  mark("import_"+code);
+  throw error;
+}
 
 mark("prefix_preserve");
 const current={
