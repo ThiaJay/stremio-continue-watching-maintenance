@@ -20,6 +20,9 @@ const expected=[
 const compatibilityDate=String(x.result?.compatibility_date||"");
 const bindingsOk=JSON.stringify(actual)===JSON.stringify(expected);
 const dateOk=compatibilityDate==="2026-09-18";
+const shortNames={ACCESS_PATH_TOKEN:"APT",BINDINGS_DB:"BDB",MAELSTROM_ROOT:"MR",METADATA:"META"};
+const contractStage="contract_"+actual.map(v=>(shortNames[v.name]||String(v.name||"X").slice(0,8))+"-"+String(v.type||"missing").replace(/[^A-Za-z0-9]/g,"").slice(0,12)).join("_")+"_date-"+compatibilityDate.replace(/[^0-9]/g,"");
+fs.writeFileSync("validation-stage.txt",contractStage.slice(0,96)+"\n");
 fs.writeFileSync("validation-contract.json",JSON.stringify({actual,expected,compatibilityDate,bindingsOk,dateOk},null,2)+"\n");
 if(!bindingsOk) {
   console.error("binding contract changed");
