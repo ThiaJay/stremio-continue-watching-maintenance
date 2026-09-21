@@ -480,6 +480,38 @@ test("ancient residual fast lane repairs an eligible series outside the ordinary
   assert.equal(puts,1);
   assert.ok(result.attemptedWrites<=MAX_WRITES+MAX_EXPLICIT_WRITES);
 });
+test("ancient residual present in the ordinary batch is planned and written only once",async()=>{
+  const target=await libraryItem({
+    pointer:"tt12345:1:1",
+    offset:12_918,
+    duration:4_509_040,
+    flagged:0,
+    mtime:NOW-ANCIENT_RESIDUAL_STALE_MS-60_000
+  });
+  target.state.timeWatched=12_893;
+  target.state.lastWatched=new Date(NOW-ANCIENT_RESIDUAL_STALE_MS-60_000).toISOString();
+
+  const ordinaryIds=new Set(selectBatch([target],NOW).items.map(x=>x._id));
+  assert.equal(ordinaryIds.has(target._id),true);
+
+  const f=fixture(target),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
+  const env={
+    STREMIO_AUTHKEY:"auth-key-value",
+    EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),
+    BACKUP_ENCRYPTION_KEY:key(),
+    BACKUP_DB:db,
+    METADATA:metaBinding(meta)
+  };
+
+  const result=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(result.ancientLaneCandidates,1);
+  assert.equal(result.attemptedWrites,1);
+  assert.equal(result.verifiedWrites,1);
+  assert.equal(result.stopped,false);
+  assert.equal(f.puts,1);
+  assert.equal(f.row.state.timeOffset,0);
+});
+
 test("explicit transition queue is oldest first and bounded independently of ordinary batch",async()=>{
   const rows=[],observations=new Map();
   for(let i=0;i<EXPLICIT_BATCH_SIZE+5;i++){
