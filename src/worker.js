@@ -5,16 +5,18 @@ const MAX_WRITES=2;
 const EXPLICIT_BATCH_SIZE=12;
 const MAX_EXPLICIT_WRITES=6;
 const ANCIENT_RESIDUAL_BATCH_SIZE=12;
+const NEAR_ZERO_BATCH_SIZE=12;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
 const RESIDUAL_POINTER_MAX_MS=15_000;
+const NEAR_ZERO_RESUME_MAX_MS=1_000;
 const RESIDUAL_STALE_MS=24*60*60*1000;
 const ANCIENT_RESIDUAL_STALE_MS=30*24*60*60*1000;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
 const BULK_WATCHED_TRANSITION_WINDOW_MS=2*60*60*1000;
-const DIAGNOSTIC_TARGET_HASHES=["d50710896150aed6","5802dbc5fda6b745","c13774ae113c75c9"];
+const DIAGNOSTIC_TARGET_HASHES=[];
 
 class StateError extends Error{constructor(code){super(code);this.name="StateError";this.code=code;}}
 const assert=(x,code)=>{if(!x)throw new StateError(code);};
@@ -215,6 +217,15 @@ async function movieMarkedWatchedTransitionDecision(item,observation,now){
   if(Math.abs(Number(observation.changed_at)-Number(observation.last_watched))>15*60*1000)return null;
   return {id:item._id,before:structuredClone(item),reason:"explicit-movie-mark-watched-stale-progress"};
 }
+function nearZeroResumeDecision(item,now){
+  if(!item||!["series","movie"].includes(item.type))return null;
+  if(item.removed&&!item.temp)return null;
+  const state=item.state||{},offset=Number(state.timeOffset),duration=Number(state.duration);
+  if(!(offset>0)||offset>NEAR_ZERO_RESUME_MAX_MS||!(duration>0))return null;
+  if(now-playbackActivityTime(item)<QUIET_MS)return null;
+  if(typeof state.video_id!=="string"||!state.video_id)return null;
+  return {id:item._id,before:structuredClone(item),reason:"near-zero-resume-noise"};
+}
 function legacyAliasDecision(item,byId,now){
   if(!item||!String(item._id||"").startsWith("tmdb:")||!(["series","movie"].includes(item.type)))return null;
   if(!(Number(item.state?.timeOffset)>0)||now-playbackActivityTime(item)<QUIET_MS)return null;
@@ -291,6 +302,22 @@ function selectBatch(items,scheduledTime){
   if(!candidates.length)return {items:[],batchIndex:0,batchCount:0,total:0};
   const batchCount=Math.ceil(candidates.length/BATCH_SIZE),slot=Math.floor(scheduledTime/CRON_MS),batchIndex=((slot%batchCount)+batchCount)%batchCount;
   return {items:candidates.slice(batchIndex*BATCH_SIZE,(batchIndex+1)*BATCH_SIZE),batchIndex,batchCount,total:candidates.length};
+}
+
+function selectNearZeroResumeItems(items,scheduledTime){
+  return items
+    .filter(item=>
+      ["series","movie"].includes(item?.type) &&
+      !(item.removed&&!item.temp) &&
+      Number(item?.state?.timeOffset)>0 &&
+      Number(item?.state?.timeOffset)<=NEAR_ZERO_RESUME_MAX_MS &&
+      Number(item?.state?.duration)>0 &&
+      typeof item?.state?.video_id==="string" &&
+      item.state.video_id &&
+      scheduledTime-playbackActivityTime(item)>=QUIET_MS
+    )
+    .sort((a,b)=>playbackActivityTime(a)-playbackActivityTime(b)||String(a._id).localeCompare(String(b._id)))
+    .slice(0,NEAR_ZERO_BATCH_SIZE);
 }
 
 function selectAncientResidualItems(items,scheduledTime){
@@ -475,7 +502,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   assert(/^[0-9a-f]{64}$/i.test(env.EXPECTED_ACCOUNT_FINGERPRINT||""),"EXPECTED_ACCOUNT_REQUIRED");
   const expected=env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase();assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
-  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],ancientPlans=[],errors=[];
+  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],nearZeroPlans=[],ancientPlans=[],errors=[];
   let observations=new Map();
   try{observations=await observeWatchedChanges(env,rows,scheduledTime);}catch(e){errors.push(e?.code||"OBSERVATION_FAILED");}
   try{await recordDiagnosticTargets(env,rows,byId,observations,scheduledTime,deps);}catch{}
@@ -494,12 +521,27 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     }catch(e){errors.push(e?.code||"EXPLICIT_EVALUATION_FAILED");}
   }
 
+  let nearZeroQueue=[];
+  try{nearZeroQueue=selectNearZeroResumeItems(rows,scheduledTime);}catch(e){errors.push(e?.code||"NEAR_ZERO_QUEUE_FAILED");}
+  const nearZeroPlanIds=new Set();
+  for(const item of nearZeroQueue){
+    try{
+      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id))continue;
+      const d=nearZeroResumeDecision(item,scheduledTime);
+      if(d){
+        d.beforeHash=await hash(item);
+        nearZeroPlans.push(d);
+        nearZeroPlanIds.add(item._id);
+      }
+    }catch(e){errors.push(e?.code||"NEAR_ZERO_EVALUATION_FAILED");}
+  }
+
   let ancientQueue=[];
   try{ancientQueue=selectAncientResidualItems(rows,scheduledTime);}catch(e){errors.push(e?.code||"ANCIENT_QUEUE_FAILED");}
   const ancientPlanIds=new Set();
   for(const item of ancientQueue){
     try{
-      if(fastPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
+      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
       const meta=await metadata(env,item,deps);
       const d=await completionDecision(item,meta,scheduledTime);
       if(d){
@@ -512,7 +554,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
 
   for(const item of batch.items){
     try{
-      if(fastPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
+      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       if(item.type==="series"&&!/^tt\d{5,12}$/.test(String(item._id||"")))continue;
@@ -536,7 +578,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
   }
   if(!stopped){
-    for(const plan of [...ancientPlans,...plans].slice(0,MAX_WRITES)){
+    for(const plan of [...nearZeroPlans,...ancientPlans,...plans].slice(0,MAX_WRITES)){
       try{attempted++;const r=await apply(env,plan,expected,deps);if(["VERIFIED","ALREADY_CLEAR"].includes(r.status))verified++;}
       catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
     }
@@ -548,9 +590,11 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     scanned:batch.items.length,
     fastLaneScanned:explicitQueue.length,
     fastLaneCandidates:fastPlans.length,
+    nearZeroLaneScanned:nearZeroQueue.length,
+    nearZeroLaneCandidates:nearZeroPlans.length,
     ancientLaneScanned:ancientQueue.length,
     ancientLaneCandidates:ancientPlans.length,
-    candidates:fastPlans.length+ancientPlans.length+plans.length,
+    candidates:fastPlans.length+nearZeroPlans.length+ancientPlans.length+plans.length,
     attemptedWrites:attempted,
     verifiedWrites:verified,
     stopped,
@@ -561,4 +605,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};

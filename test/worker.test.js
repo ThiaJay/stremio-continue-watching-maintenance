@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -355,7 +355,7 @@ test("historical/external watched sync does not clear an active resume pointer",
 });
 
 test("canonical series without watched anchor evidence are skipped without metadata errors",async()=>{
-  const before=await libraryItem();
+  const before=await libraryItem({offset:5_000});
   before.state.watched=null;
   const f=fixture(before),db=new DB();
   const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:{fetch:async()=>{throw new Error("metadata should not be called");}}};
@@ -366,7 +366,7 @@ test("canonical series without watched anchor evidence are skipped without metad
 });
 
 test("explicit transition queue skips anchorless series before metadata evaluation",async()=>{
-  const before=await libraryItem();
+  const before=await libraryItem({offset:5_000});
   before.state.watched=null;
   const f=fixture(before),db=new DB(),itemHash=await observationKey(before);
   db.observations.set(itemHash,{
@@ -384,7 +384,7 @@ test("explicit transition queue skips anchorless series before metadata evaluati
 });
 
 test("non-canonical series that cannot be safely aliased are skipped without metadata errors",async()=>{
-  const before=await libraryItem();
+  const before=await libraryItem({offset:5_000});
   before._id="tmdb:999";
   before.state.video_id="tmdb:999:1:3";
   const f=fixture(before),db=new DB();
@@ -393,6 +393,47 @@ test("non-canonical series that cannot be safely aliased are skipped without met
   assert.equal(s.verifiedWrites,0);
   assert.equal(s.errorCodes.includes("META_CANONICAL_ID_REQUIRED"),false);
   assert.equal(f.puts,0);
+});
+
+test("quiet sub-second series resume is treated as non-meaningful noise without inferring completion",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,false,false],offset:167,duration:2_893_223,flagged:0,mtime:NOW-QUIET_MS-60_000});
+  item.state.timeWatched=31_035;
+  item.state.lastWatched=new Date(NOW-QUIET_MS-60_000).toISOString();
+  const d=nearZeroResumeDecision(item,NOW);
+  assert.equal(d?.reason,"near-zero-resume-noise");
+});
+
+test("recent sub-second resume remains untouched inside the quiet window",async()=>{
+  const item=await libraryItem({offset:167,duration:2_893_223,mtime:NOW-5*60_000});
+  item.state.lastWatched=new Date(NOW-5*60_000).toISOString();
+  assert.equal(nearZeroResumeDecision(item,NOW),null);
+  assert.equal(selectNearZeroResumeItems([item],NOW).length,0);
+});
+
+test("resume above one second is not treated as near-zero noise",async()=>{
+  const item=await libraryItem({offset:1001,duration:2_893_223,mtime:NOW-QUIET_MS-60_000});
+  item.state.lastWatched=new Date(NOW-QUIET_MS-60_000).toISOString();
+  assert.equal(nearZeroResumeDecision(item,NOW),null);
+  assert.equal(selectNearZeroResumeItems([item],NOW).length,0);
+});
+
+test("near-zero fast lane clears incomplete-series noise once and preserves watched state",async()=>{
+  const before=await libraryItem({pointer:"tt12345:1:2",bits:[true,false,false],offset:167,duration:2_893_223,flagged:0,mtime:NOW-QUIET_MS-60_000});
+  before.state.timeWatched=31_035;
+  before.state.lastWatched=new Date(NOW-QUIET_MS-60_000).toISOString();
+  const watchedBefore=before.state.watched;
+  const f=fixture(before),db=new DB();
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding({id:"tt12345",type:"series",videos:videos()})};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.nearZeroLaneCandidates,1);
+  assert.equal(s.attemptedWrites,1);
+  assert.equal(s.verifiedWrites,1);
+  assert.equal(s.stopped,false);
+  assert.equal(f.puts,1);
+  assert.equal(f.row.state.timeOffset,0);
+  assert.equal(f.row.state.watched,watchedBefore);
+  assert.equal(f.row.state.timeWatched,31_035);
+  assert.equal(db.rows.length,1);
 });
 
 test("batch selection is deterministic and bounded",async()=>{
