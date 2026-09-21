@@ -3,3 +3,5 @@
 Temporary trigger for privacy-safe diagnosis of known stale examples.
 
 Age and duration recheck.
+
+Transition timing recheck.
