@@ -4,6 +4,7 @@ const BATCH_SIZE=8;
 const MAX_WRITES=2;
 const EXPLICIT_BATCH_SIZE=12;
 const MAX_EXPLICIT_WRITES=6;
+const ANCIENT_RESIDUAL_BATCH_SIZE=12;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
@@ -291,6 +292,24 @@ function selectBatch(items,scheduledTime){
   return {items:candidates.slice(batchIndex*BATCH_SIZE,(batchIndex+1)*BATCH_SIZE),batchIndex,batchCount,total:candidates.length};
 }
 
+function selectAncientResidualItems(items,scheduledTime){
+  return items
+    .filter(item=>
+      item?.type==="series" &&
+      /^tt\d{5,12}$/.test(String(item?._id||"")) &&
+      !(item.removed&&!item.temp) &&
+      Number(item?.state?.timeOffset)>0 &&
+      Number(item?.state?.timeOffset)<=RESIDUAL_POINTER_MAX_MS &&
+      Number(item?.state?.timeWatched)>=0 &&
+      Number(item?.state?.timeWatched)<=RESIDUAL_POINTER_MAX_MS &&
+      Number(item?.state?.duration)>0 &&
+      watchedAnchor(item?.state?.watched) &&
+      scheduledTime-playbackActivityTime(item)>=ANCIENT_RESIDUAL_STALE_MS
+    )
+    .sort((a,b)=>playbackActivityTime(a)-playbackActivityTime(b)||String(a._id).localeCompare(String(b._id)))
+    .slice(0,ANCIENT_RESIDUAL_BATCH_SIZE);
+}
+
 async function selectExplicitTransitionItems(items,observations,scheduledTime){
   const candidates=[];
   for(const item of items){
@@ -353,7 +372,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   assert(/^[0-9a-f]{64}$/i.test(env.EXPECTED_ACCOUNT_FINGERPRINT||""),"EXPECTED_ACCOUNT_REQUIRED");
   const expected=env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase();assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
-  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],errors=[];
+  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],ancientPlans=[],errors=[];
   let observations=new Map();
   try{observations=await observeWatchedChanges(env,rows,scheduledTime);}catch(e){errors.push(e?.code||"OBSERVATION_FAILED");}
 
@@ -369,6 +388,22 @@ async function run(env,scheduledTime=Date.now(),deps={}){
         :await movieMarkedWatchedTransitionDecision(item,observation,scheduledTime);
       if(transition){transition.beforeHash=await hash(item);fastPlans.push(transition);fastPlanIds.add(item._id);}
     }catch(e){errors.push(e?.code||"EXPLICIT_EVALUATION_FAILED");}
+  }
+
+  let ancientQueue=[];
+  try{ancientQueue=selectAncientResidualItems(rows,scheduledTime);}catch(e){errors.push(e?.code||"ANCIENT_QUEUE_FAILED");}
+  const ancientPlanIds=new Set();
+  for(const item of ancientQueue){
+    try{
+      if(fastPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
+      const meta=await metadata(env,item,deps);
+      const d=await completionDecision(item,meta,scheduledTime);
+      if(d){
+        d.beforeHash=await hash(item);
+        ancientPlans.push(d);
+        ancientPlanIds.add(item._id);
+      }
+    }catch(e){errors.push(e?.code||"ANCIENT_EVALUATION_FAILED");}
   }
 
   for(const item of batch.items){
@@ -397,7 +432,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
   }
   if(!stopped){
-    for(const plan of plans.slice(0,MAX_WRITES)){
+    for(const plan of [...ancientPlans,...plans].slice(0,MAX_WRITES)){
       try{attempted++;const r=await apply(env,plan,expected,deps);if(["VERIFIED","ALREADY_CLEAR"].includes(r.status))verified++;}
       catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
     }
@@ -409,7 +444,9 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     scanned:batch.items.length,
     fastLaneScanned:explicitQueue.length,
     fastLaneCandidates:fastPlans.length,
-    candidates:fastPlans.length+plans.length,
+    ancientLaneScanned:ancientQueue.length,
+    ancientLaneCandidates:ancientPlans.length,
+    candidates:fastPlans.length+ancientPlans.length+plans.length,
     attemptedWrites:attempted,
     verifiedWrites:verified,
     stopped,
@@ -420,4 +457,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,run,apply};

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -400,6 +400,85 @@ test("batch selection is deterministic and bounded",async()=>{
   const seen=new Set(),count=Math.ceil(rows.length/BATCH_SIZE);
   for(let slot=0;slot<count;slot++)for(const x of selectBatch(rows,slot*10*60*1000).items)seen.add(x._id);
   assert.equal(seen.size,rows.length);
+});
+
+test("ancient residual selector is bounded and excludes recent or meaningful rewatches",async()=>{
+  const old=await libraryItem({pointer:"tt12345:1:1",offset:12_000,duration:100_000,mtime:NOW-ANCIENT_RESIDUAL_STALE_MS-60_000});
+  old.state.timeWatched=11_999;
+  old.state.lastWatched=new Date(NOW-ANCIENT_RESIDUAL_STALE_MS-60_000).toISOString();
+
+  const recent=structuredClone(old);
+  recent._id="tt12346";
+  recent.state.lastWatched=new Date(NOW-RESIDUAL_STALE_MS-60_000).toISOString();
+
+  const meaningful=structuredClone(old);
+  meaningful._id="tt12347";
+  meaningful.state.timeWatched=RESIDUAL_POINTER_MAX_MS+1;
+
+  const selected=selectAncientResidualItems([recent,meaningful,old],NOW);
+  assert.deepEqual(selected.map(x=>x._id),["tt12345"]);
+  assert.ok(selected.length<=ANCIENT_RESIDUAL_BATCH_SIZE);
+});
+
+test("ancient residual fast lane repairs an eligible series outside the ordinary rotating batch",async()=>{
+  const rows=[];
+  for(let i=0;i<20;i++){
+    const id="tt"+String(8100000+i);
+    const x=await libraryItem({offset:60_000,duration:120_000,mtime:NOW-QUIET_MS-60_000});
+    x._id=id;x.name="Series "+i;x.state.video_id=id+":1:3";
+    const ids=videos().map(v=>v.id.replace("tt12345",id));
+    x.state.watched=await encode([true,true,false],ids);
+    rows.push(x);
+  }
+
+  const targetId="tt8199999";
+  const target=await libraryItem({pointer:"tt12345:1:1",offset:12_918,duration:4_509_040,flagged:0,mtime:NOW-ANCIENT_RESIDUAL_STALE_MS-60_000});
+  target._id=targetId;
+  target.name="Ancient Complete Series";
+  target.state.video_id=targetId+":1:1";
+  target.state.timeWatched=12_893;
+  target.state.lastWatched=new Date(NOW-ANCIENT_RESIDUAL_STALE_MS-60_000).toISOString();
+  const targetIds=videos().map(v=>v.id.replace("tt12345",targetId));
+  target.state.watched=await encode([true,true,true],targetIds);
+  rows.push(target);
+
+  let current=structuredClone(rows),puts=0;
+  const scheduledTime=NOW;
+  const ordinaryIds=new Set(selectBatch(current,scheduledTime).items.map(x=>x._id));
+  assert.equal(ordinaryIds.has(targetId),false);
+
+  const fetchImpl=async(url,init={})=>{
+    const ep=String(url).split("/").pop(),body=JSON.parse(init.body||"{}");
+    if(ep==="getUser")return Response.json({result:{_id:"account-1"}});
+    if(ep==="datastoreGet"){
+      if(body.all)return Response.json({result:structuredClone(current)});
+      return Response.json({result:body.ids.map(id=>current.find(x=>x._id===id)).filter(Boolean).map(x=>structuredClone(x))});
+    }
+    if(ep==="datastorePut"){
+      puts++;
+      const candidate=structuredClone(body.changes[0]);
+      const index=current.findIndex(x=>x._id===candidate._id);
+      current[index]=candidate;
+      return Response.json({result:{success:true}});
+    }
+    throw new Error(ep);
+  };
+
+  const db=new DB(),env={
+    STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),
+    BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,
+    METADATA:{fetch:async r=>{
+      const id=new URL(r.url).pathname.split("/").pop().replace(".json","");
+      return Response.json({meta:{id,type:"series",videos:videos().map(v=>({...v,id:v.id.replace("tt12345",id)}))}});
+    }}
+  };
+
+  const result=await run(env,scheduledTime,{fetchImpl,sleep:async()=>{},now:()=>scheduledTime});
+  assert.equal(result.ancientLaneCandidates,1);
+  assert.equal(result.verifiedWrites,1);
+  assert.equal(current.find(x=>x._id===targetId).state.timeOffset,0);
+  assert.equal(puts,1);
+  assert.ok(result.attemptedWrites<=MAX_WRITES+MAX_EXPLICIT_WRITES);
 });
 test("explicit transition queue is oldest first and bounded independently of ordinary batch",async()=>{
   const rows=[],observations=new Map();
