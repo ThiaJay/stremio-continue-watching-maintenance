@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,readbackMismatchCode,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -566,6 +566,77 @@ function fixture(initial){
   };
   return{fetchImpl,get row(){return row},replaceRow(next){row=structuredClone(next)},get puts(){return puts},get reads(){return reads}};
 }
+function delayedReadbackFixture(initial,{visibleAfter=3}={}){
+  let row=structuredClone(initial),pending=null,puts=0,postWriteReads=0;
+  const fetchImpl=async(url,init={})=>{
+    const ep=String(url).split("/").pop(),body=JSON.parse(init.body||"{}");
+    if(ep==="getUser")return Response.json({result:{_id:"account-1"}});
+    if(ep==="datastoreGet"){
+      if(body.all)return Response.json({result:[structuredClone(row)]});
+      if(pending){
+        postWriteReads++;
+        if(Number.isFinite(visibleAfter)&&postWriteReads>=visibleAfter){
+          row=structuredClone(pending);
+          pending=null;
+        }
+      }
+      return Response.json({result:[structuredClone(row)]});
+    }
+    if(ep==="datastorePut"){
+      puts++;
+      pending=structuredClone(body.changes[0]);
+      return Response.json({result:{success:true}});
+    }
+    throw new Error(ep);
+  };
+  return{fetchImpl,get row(){return row},get puts(){return puts},get postWriteReads(){return postWriteReads}};
+}
+
+test("readback mismatch classification distinguishes ignored, partial and concurrent state",async()=>{
+  const before=await libraryItem();
+  const candidate=structuredClone(before);
+  candidate.state.timeOffset=0;
+  candidate._mtime=new Date(NOW).toISOString();
+
+  const unchanged=structuredClone(before);
+  assert.equal(readbackMismatchCode(before,candidate,unchanged),"READBACK_OFFSET_MISMATCH_UNCHANGED");
+
+  const partial=structuredClone(before);
+  partial._mtime=candidate._mtime;
+  assert.equal(readbackMismatchCode(before,candidate,partial),"READBACK_OFFSET_MISMATCH_MTIME_APPLIED");
+
+  const drift=structuredClone(before);
+  drift._mtime=new Date(NOW+60_000).toISOString();
+  assert.equal(readbackMismatchCode(before,candidate,drift),"READBACK_OFFSET_MISMATCH_DRIFT");
+});
+
+test("scheduled cleanup tolerates bounded delayed datastore readback",async()=>{
+  const before=await libraryItem(),f=delayedReadbackFixture(before,{visibleAfter:3}),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()},waits=[];
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding(meta)};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async ms=>waits.push(ms),now:()=>NOW});
+  assert.equal(s.verifiedWrites,1);
+  assert.equal(s.stopped,false);
+  assert.equal(f.puts,1);
+  assert.equal(f.postWriteReads,3);
+  assert.equal(f.row.state.timeOffset,0);
+  assert.deepEqual(waits.slice(-3),[0,250,750]);
+  assert.equal(db.rows.length,1);
+});
+
+test("persistent unchanged readback remains fail closed after bounded retries",async()=>{
+  const before=await libraryItem(),f=delayedReadbackFixture(before,{visibleAfter:Infinity}),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding(meta)};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.attemptedWrites,1);
+  assert.equal(s.verifiedWrites,0);
+  assert.equal(s.stopped,true);
+  assert.equal(s.errorCodes.includes("READBACK_OFFSET_MISMATCH_UNCHANGED"),true);
+  assert.equal(f.puts,1);
+  assert.equal(f.postWriteReads,4);
+  assert.equal(f.row.state.timeOffset,before.state.timeOffset);
+  assert.equal(db.rows.length,1);
+});
+
 function key(){const b=new Uint8Array(32);crypto.getRandomValues(b);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 test("scheduled run clears only timeOffset and keeps watched history intact",async()=>{
   const before=await libraryItem(),f=fixture(before),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
