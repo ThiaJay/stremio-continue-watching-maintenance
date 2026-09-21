@@ -196,7 +196,36 @@ if ! syntax_output="$(node --check patched-worker.mjs 2>&1)"; then
   if [ -z "$syntax_line" ]; then syntax_line="unknown"; fi
   syntax_kind="$(printf '%s\n' "$syntax_output" | sed -n 's/^SyntaxError:[[:space:]]*//p' | head -n 1 | tr -cd 'A-Za-z0-9' | head -c 32)"
   if [ -z "$syntax_kind" ]; then syntax_kind="unknown"; fi
-  printf 'syntax_line_%s_%s\n' "$syntax_line" "$syntax_kind" > validation-stage.txt
+  printf '%s\n' "$syntax_output" > syntax-output.txt
+  syntax_char="$(python3 - <<'PY'
+from pathlib import Path
+import re
+out=Path("syntax-output.txt").read_text(errors="replace").splitlines()
+src=Path("patched-worker.mjs").read_text(errors="replace").splitlines()
+line_no=None
+for line in out:
+    m=re.search(r"patched-worker\.mjs:(\d+)",line)
+    if m:
+        line_no=int(m.group(1))
+        break
+caret=None
+for i,line in enumerate(out):
+    if line_no and i>0 and "^" in line:
+        caret=line.find("^")
+        break
+if line_no and 1<=line_no<=len(src):
+    row=src[line_no-1]
+    if caret is not None and caret<len(row):
+        print(format(ord(row[caret]),"x"))
+    elif row:
+        print(format(ord(row[0]),"x"))
+    else:
+        print("empty")
+else:
+    print("unknown")
+PY
+)"
+  printf 'syntax_line_%s_%s_char%s\n' "$syntax_line" "$syntax_kind" "$syntax_char" > validation-stage.txt
   printf '%s\n' "$syntax_output" >&2
   exit 1
 fi
