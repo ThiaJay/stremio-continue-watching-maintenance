@@ -419,7 +419,9 @@ async function reportedRepairDecision(item,byId,observations,env,now,deps={}){
 
 async function recordDiagnosticTargets(env,rows,byId,observations,now,deps={}){
   if(!env.BACKUP_DB?.prepare)return 0;
-  const targets=Array.isArray(deps.diagnosticTargets)?deps.diagnosticTargets:DIAGNOSTIC_TARGET_HASHES;
+  const targets=Array.isArray(deps.diagnosticTargets)
+    ? deps.diagnosticTargets
+    : [...DIAGNOSTIC_TARGET_HASHES,...secretReportedRepairHashes(env,now)];
   const safeTargets=[...new Set(targets.map(x=>String(x||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))].slice(0,12);
   if(!safeTargets.length)return 0;
   if(!deps.skipDiagnosticSchema){
