@@ -194,7 +194,9 @@ printf 'syntax_check\n' > validation-stage.txt
 if ! syntax_output="$(node --check patched-worker.mjs 2>&1)"; then
   syntax_line="$(printf '%s\n' "$syntax_output" | sed -n 's/.*patched-worker\.mjs:\([0-9][0-9]*\).*/\1/p' | head -n 1)"
   if [ -z "$syntax_line" ]; then syntax_line="unknown"; fi
-  printf 'syntax_line_%s\n' "$syntax_line" > validation-stage.txt
+  syntax_kind="$(printf '%s\n' "$syntax_output" | sed -n 's/^SyntaxError:[[:space:]]*//p' | head -n 1 | tr -cd 'A-Za-z0-9' | head -c 32)"
+  if [ -z "$syntax_kind" ]; then syntax_kind="unknown"; fi
+  printf 'syntax_line_%s_%s\n' "$syntax_line" "$syntax_kind" > validation-stage.txt
   printf '%s\n' "$syntax_output" >&2
   exit 1
 fi
