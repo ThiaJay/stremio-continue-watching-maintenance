@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+printf 'validate\n' > deployment-stage.txt
 bash scripts/validate-aiostreams-maelstrom.sh
 
 expected_source="$(tr -cd '0-9a-f' < source-hash.txt | head -c 64)"
 test "${#expected_source}" -eq 64
 
+printf 'settings_before\n' > deployment-stage.txt
 settings_before="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
 node - <<'NODE' "$settings_before" > settings-before-safe.json
 const x=JSON.parse(process.argv[2]);
@@ -17,6 +19,7 @@ const out={
 process.stdout.write(JSON.stringify(out));
 NODE
 
+printf 'deployment_before\n' > deployment-stage.txt
 deployments_before="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/deployments")"
 before_id="$(node -e 'const x=JSON.parse(process.argv[1]);const ds=x.result?.deployments||x.result||[];const d=Array.isArray(ds)?ds[0]:null;if(!x.success||!d)process.exit(2);process.stdout.write(String(d.id||""))' "$deployments_before")"
 test -n "$before_id"
@@ -54,6 +57,7 @@ print(hashlib.sha256(found).hexdigest())
 PY
 }
 
+printf 'source_recheck\n' > deployment-stage.txt
 current_source="$(fetch_live_hash)"
 if [ "$current_source" != "$expected_source" ]; then
   echo "::error::Production source changed after validation"
@@ -63,6 +67,7 @@ fi
 candidate_hash="$(sha256sum patched-worker.mjs | awk '{print $1}')"
 test "${#candidate_hash}" -eq 64
 
+printf 'content_put\n' > deployment-stage.txt
 printf '%s' '{"main_module":"worker.js"}' > metadata.json
 response="$(curl -fsS -X PUT \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
@@ -71,6 +76,7 @@ response="$(curl -fsS -X PUT \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content")"
 node -e 'const x=JSON.parse(process.argv[1]);if(!x.success){console.error(JSON.stringify(x.errors||[]));process.exit(1)};console.log("content_update_accepted")' "$response"
 
+printf 'settings_after\n' > deployment-stage.txt
 settings_after="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
 node - <<'NODE' "$settings_after" > settings-after-safe.json
 const x=JSON.parse(process.argv[2]);
@@ -83,6 +89,7 @@ process.stdout.write(JSON.stringify(out));
 NODE
 cmp settings-before-safe.json settings-after-safe.json
 
+printf 'deployment_after\n' > deployment-stage.txt
 deployments_after="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/deployments")"
 after_id="$(node -e 'const x=JSON.parse(process.argv[1]);const ds=x.result?.deployments||x.result||[];const d=Array.isArray(ds)?ds[0]:null;if(!x.success||!d)process.exit(2);process.stdout.write(String(d.id||""))' "$deployments_after")"
 test -n "$after_id"
@@ -91,6 +98,7 @@ if [ "$after_id" = "$before_id" ]; then
   exit 4
 fi
 
+printf 'source_after\n' > deployment-stage.txt
 post_hash="$(fetch_live_hash)"
 if [ "$post_hash" != "$candidate_hash" ]; then
   echo "::error::Post deployment source does not match validated candidate"
@@ -100,4 +108,5 @@ fi
 node --check patched-worker.mjs
 printf '%s\n' "$after_id" > deployment-id.txt
 printf '%s\n' "$candidate_hash" > deployed-source-hash.txt
+printf 'passed\n' > deployment-stage.txt
 echo "deployment_verified"
