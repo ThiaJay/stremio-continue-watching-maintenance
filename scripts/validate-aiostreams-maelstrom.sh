@@ -240,10 +240,13 @@ printf 'regression_tests\n' > validation-stage.txt
 cat > validate.mjs <<'NODE'
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
 globalThis.crypto=globalThis.crypto||crypto.webcrypto;
+const mark=(name)=>fs.writeFileSync("validation-stage.txt","reg_"+name+"\n");
 
 const mod=await import("./patched-worker.mjs");
 
+mark("prefix_preserve");
 const current={
   streams:[{
     name:"AIOStreams",
@@ -261,6 +264,7 @@ assert.equal(hardened.streams[0].name,"AIOStreams");
 assert.equal(hardened.streams[0].behaviorHints.filename,"episode.mkv");
 assert.equal(hardened.streams[0].url,"https://media.invalid/current");
 
+mark("exact_missing");
 const exactPayload={streams:[{name:"Maelstrom",behaviorHints:{bingeGroup:"addon|720p|HEVC"}}]};
 const exactNext={streams:[{behaviorHints:{bingeGroup:"addon|720p|HEVC"}}]};
 assert.equal(mod.applyBingeGroupFallback(exactPayload,exactNext),exactPayload);
@@ -268,6 +272,7 @@ assert.equal(mod.applyBingeGroupFallback(exactPayload,exactNext),exactPayload);
 const missing={streams:[{name:"AIOStreams",behaviorHints:{filename:"x.mkv"}}]};
 assert.equal(mod.applyBingeGroupFallback(missing,next),missing);
 
+mark("failclosed");
 const noSafePrefix={streams:[{name:"AIOStreams",behaviorHints:{bingeGroup:"addon|AFG"}}]};
 const bareOnly={streams:[{behaviorHints:{bingeGroup:"addon"}}]};
 assert.equal(mod.applyBingeGroupFallback(noSafePrefix,bareOnly),noSafePrefix);
@@ -275,6 +280,7 @@ assert.equal(mod.applyBingeGroupFallback(noSafePrefix,bareOnly),noSafePrefix);
 const emptyComponent={streams:[{name:"AIOStreams",behaviorHints:{bingeGroup:"addon|"}}]};
 assert.equal(mod.applyBingeGroupFallback(emptyComponent,bareOnly),emptyComponent);
 
+mark("longest_prefix");
 const longest={streams:[{behaviorHints:{bingeGroup:"addon|2160p|WEB|Group"}}]};
 const prefixes={streams:[
   {behaviorHints:{bingeGroup:"addon|2160p"}},
@@ -286,9 +292,11 @@ const unrelated={streams:[{name:"Maelstrom",behaviorHints:{bingeGroup:"addon|108
 const unrelatedNext={streams:[{behaviorHints:{bingeGroup:"addon|720p"}}]};
 assert.equal(mod.applyBingeGroupFallback(unrelated,unrelatedNext),unrelated);
 
+mark("helper");
 assert.equal(mod.strictBingePrefix("addon|1080p|MeGusta",new Set(["addon|1080p"])),"addon|1080p");
 assert.equal(mod.strictBingePrefix("addon|",new Set(["addon"])),null);
 
+mark("manifest_aiostreams");
 let upstreamName="AIOStreams";
 globalThis.fetch=async (url) => {
   const u=String(url);
@@ -312,11 +320,13 @@ assert.equal(manifest.id,"org.thiajay.stream-compatibility");
 assert.equal(manifest.version,"9.1.0-adapter.8");
 assert.notEqual(manifest.name,"Stream Compatibility");
 
+mark("manifest_maelstrom");
 upstreamName="Maelstrom";
 const response2=await mod.default.fetch(new Request("https://gateway.invalid/"+token+"/manifest.json"),env,{});
 const manifest2=await response2.json();
 assert.equal(manifest2.name,"Maelstrom");
 
+mark("passed");
 console.log("deterministic_regressions_ok");
 NODE
 
