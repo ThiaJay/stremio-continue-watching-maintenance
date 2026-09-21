@@ -59,8 +59,8 @@ jobs:
               if name!="worker.js": continue
               text=data.decode("utf-8")
               lines=text.splitlines()
-              start=244
-              end=min(len(lines),390)
+              start=379
+              end=min(len(lines),470)
               print(f"context {name} {start+1}-{end}")
               for n in range(start,end):
                   line=lines[n]
