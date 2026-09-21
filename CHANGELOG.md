@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.3 — 2026-09-22
+
+- Extends the privacy-safe diagnostic lane to active expiring reported-repair targets.
+- Diagnostic snapshots remain non-mutating and contain only numeric progress, watched-state proof flags and decision reason codes.
+- No reported title, raw media ID, watched bitmap or account credential is stored in the diagnostic payload.
+- Uses the same reported target expiry and bounded hash set already active for repair prioritisation.
+- Does not change repair eligibility, ordering, write limits or account mutation behaviour.
+- Adds regression coverage proving an active private reported target produces a completion snapshot without exposing raw identity.
+
 ## 1.7.2 — 2026-09-22
 
 - Adds an expiring private Worker secret as a fallback transport for the reported issue repair lane when direct D1 queue administration is unavailable.

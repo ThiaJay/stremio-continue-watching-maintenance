@@ -864,6 +864,29 @@ test("privacy-safe targeted diagnostics record an absent target without account 
   assert.deepEqual(JSON.parse(db.results.get("0123456789abcdef").payload),{present:0});
 });
 
+test("active reported repair secret also drives privacy-safe diagnostics",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:12_000,duration:100_000,flagged:0,mtime:NOW-ANCIENT_RESIDUAL_STALE_MS-60_000});
+  item.state.timeWatched=11_900;
+  item.state.lastWatched=new Date(NOW-ANCIENT_RESIDUAL_STALE_MS-60_000).toISOString();
+  const itemHash=await observationKey(item);
+  const db=new DiagnosticDB();
+  const meta={id:"tt12345",type:"series",videos:videos()};
+  const env={
+    BACKUP_DB:db,
+    METADATA:metaBinding(meta),
+    REPORTED_REPAIR_TARGETS:JSON.stringify({expiresAt:NOW+60_000,hashes:[itemHash]})
+  };
+  const written=await recordDiagnosticTargets(env,[item],new Map([[item._id,item]]),new Map(),NOW,{skipDiagnosticSchema:true});
+  assert.equal(written,1);
+  const snapshot=JSON.parse(db.results.get(itemHash).payload);
+  assert.equal(snapshot.present,1);
+  assert.equal(snapshot.allReleasedWatched,1);
+  assert.equal(snapshot.pointerWatched,1);
+  assert.equal(snapshot.completionReason,"fully-watched-series-ancient-tiny-watched-episode-residual-progress");
+  assert.equal(db.results.get(itemHash).payload.includes("tt12345"),false);
+  assert.equal(db.results.get(itemHash).payload.includes("Example"),false);
+});
+
 function key(){const b=new Uint8Array(32);crypto.getRandomValues(b);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 test("scheduled run clears only timeOffset and keeps watched history intact",async()=>{
   const before=await libraryItem(),f=fixture(before),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
