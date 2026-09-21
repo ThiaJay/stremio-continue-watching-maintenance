@@ -6,6 +6,8 @@ const EXPLICIT_BATCH_SIZE=12;
 const MAX_EXPLICIT_WRITES=6;
 const ANCIENT_RESIDUAL_BATCH_SIZE=12;
 const NEAR_ZERO_BATCH_SIZE=12;
+const REPORTED_REPAIR_BATCH_SIZE=12;
+const REPORTED_REPAIR_RETRY_MS=60*60*1000;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
@@ -351,6 +353,56 @@ async function selectExplicitTransitionItems(items,observations,scheduledTime){
   return candidates.slice(0,EXPLICIT_BATCH_SIZE);
 }
 
+async function loadReportedRepairHashes(env,now,deps={}){
+  if(Array.isArray(deps.reportedRepairHashes)){
+    return [...new Set(deps.reportedRepairHashes.map(x=>String(x||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))].slice(0,REPORTED_REPAIR_BATCH_SIZE);
+  }
+  if(!env.BACKUP_DB?.prepare)return [];
+  try{
+    const q=await env.BACKUP_DB.prepare("SELECT item_hash FROM repair_targets_v1 WHERE expires_at >= ? AND (last_attempt = 0 OR last_attempt <= ?) ORDER BY created_at ASC LIMIT ?")
+      .bind(now,now-REPORTED_REPAIR_RETRY_MS,REPORTED_REPAIR_BATCH_SIZE).all();
+    return [...new Set((q?.results||[]).map(x=>String(x.item_hash||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))];
+  }catch{return [];}
+}
+async function selectReportedRepairItems(rows,targetHashes){
+  const wanted=new Set(targetHashes),selected=[];
+  if(!wanted.size)return selected;
+  for(const item of rows){
+    const itemHash=await observationKey(item);
+    if(wanted.has(itemHash))selected.push({itemHash,item});
+  }
+  return selected.slice(0,REPORTED_REPAIR_BATCH_SIZE);
+}
+async function markReportedRepairAttempt(env,itemHash,when,deps={}){
+  if(typeof deps.markReportedRepairAttempt==="function")return deps.markReportedRepairAttempt(itemHash,when);
+  if(!env.BACKUP_DB?.prepare)return;
+  try{await env.BACKUP_DB.prepare("UPDATE repair_targets_v1 SET attempts=attempts+1,last_attempt=? WHERE item_hash=?").bind(when,itemHash).run();}catch{}
+}
+async function clearReportedRepairTarget(env,itemHash,deps={}){
+  if(typeof deps.clearReportedRepairTarget==="function")return deps.clearReportedRepairTarget(itemHash);
+  if(!env.BACKUP_DB?.prepare)return;
+  try{await env.BACKUP_DB.prepare("DELETE FROM repair_targets_v1 WHERE item_hash=?").bind(itemHash).run();}catch{}
+}
+async function reportedRepairDecision(item,byId,observations,env,now,deps={}){
+  const nearZero=nearZeroResumeDecision(item,now);
+  if(nearZero)return nearZero;
+  const alias=legacyAliasDecision(item,byId,now);
+  if(alias)return alias;
+  if(item?.type==="series"){
+    if(!/^tt\d{5,12}$/.test(String(item._id||""))||!watchedAnchor(item?.state?.watched))return null;
+    const meta=await metadata(env,item,deps);
+    const transition=await bulkWatchedTransitionDecision(item,meta,observations.get(await observationKey(item)),now);
+    if(transition)return transition;
+    return completionDecision(item,meta,now);
+  }
+  if(item?.type==="movie"){
+    const transition=await movieMarkedWatchedTransitionDecision(item,observations.get(await observationKey(item)),now);
+    if(transition)return transition;
+    return completionDecision(item,null,now);
+  }
+  return null;
+}
+
 async function recordDiagnosticTargets(env,rows,byId,observations,now,deps={}){
   if(!env.BACKUP_DB?.prepare)return 0;
   const targets=Array.isArray(deps.diagnosticTargets)?deps.diagnosticTargets:DIAGNOSTIC_TARGET_HASHES;
@@ -502,7 +554,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   assert(/^[0-9a-f]{64}$/i.test(env.EXPECTED_ACCOUNT_FINGERPRINT||""),"EXPECTED_ACCOUNT_REQUIRED");
   const expected=env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase();assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   if(Math.floor(scheduledTime/CRON_MS)%144===0)try{await prune(env,scheduledTime);}catch{}
-  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],nearZeroPlans=[],ancientPlans=[],errors=[];
+  const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],reportedPlans=[],nearZeroPlans=[],ancientPlans=[],errors=[];
   let observations=new Map();
   try{observations=await observeWatchedChanges(env,rows,scheduledTime);}catch(e){errors.push(e?.code||"OBSERVATION_FAILED");}
   try{await recordDiagnosticTargets(env,rows,byId,observations,scheduledTime,deps);}catch{}
@@ -521,12 +573,28 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     }catch(e){errors.push(e?.code||"EXPLICIT_EVALUATION_FAILED");}
   }
 
+  let reportedQueue=[];
+  try{reportedQueue=await selectReportedRepairItems(rows,await loadReportedRepairHashes(env,scheduledTime,deps));}catch(e){errors.push(e?.code||"REPORTED_QUEUE_FAILED");}
+  const reportedPlanIds=new Set();
+  for(const {itemHash,item} of reportedQueue){
+    try{
+      if(fastPlanIds.has(item._id)||reportedPlanIds.has(item._id))continue;
+      const d=await reportedRepairDecision(item,byId,observations,env,scheduledTime,deps);
+      if(d){
+        d.beforeHash=await hash(item);
+        d.reportedHash=itemHash;
+        reportedPlans.push(d);
+        reportedPlanIds.add(item._id);
+      }
+    }catch(e){errors.push(e?.code||"REPORTED_EVALUATION_FAILED");}
+  }
+
   let nearZeroQueue=[];
   try{nearZeroQueue=selectNearZeroResumeItems(rows,scheduledTime);}catch(e){errors.push(e?.code||"NEAR_ZERO_QUEUE_FAILED");}
   const nearZeroPlanIds=new Set();
   for(const item of nearZeroQueue){
     try{
-      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id))continue;
+      if(fastPlanIds.has(item._id)||reportedPlanIds.has(item._id)||nearZeroPlanIds.has(item._id))continue;
       const d=nearZeroResumeDecision(item,scheduledTime);
       if(d){
         d.beforeHash=await hash(item);
@@ -541,7 +609,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   const ancientPlanIds=new Set();
   for(const item of ancientQueue){
     try{
-      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
+      if(fastPlanIds.has(item._id)||reportedPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
       const meta=await metadata(env,item,deps);
       const d=await completionDecision(item,meta,scheduledTime);
       if(d){
@@ -554,7 +622,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
 
   for(const item of batch.items){
     try{
-      if(fastPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
+      if(fastPlanIds.has(item._id)||reportedPlanIds.has(item._id)||nearZeroPlanIds.has(item._id)||ancientPlanIds.has(item._id))continue;
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       if(item.type==="series"&&!/^tt\d{5,12}$/.test(String(item._id||"")))continue;
@@ -578,9 +646,16 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
   }
   if(!stopped){
-    for(const plan of [...nearZeroPlans,...ancientPlans,...plans].slice(0,MAX_WRITES)){
-      try{attempted++;const r=await apply(env,plan,expected,deps);if(["VERIFIED","ALREADY_CLEAR"].includes(r.status))verified++;}
-      catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
+    for(const plan of [...reportedPlans,...nearZeroPlans,...ancientPlans,...plans].slice(0,MAX_WRITES)){
+      try{
+        attempted++;
+        if(plan.reportedHash)await markReportedRepairAttempt(env,plan.reportedHash,scheduledTime,deps);
+        const r=await apply(env,plan,expected,deps);
+        if(["VERIFIED","ALREADY_CLEAR"].includes(r.status)){
+          verified++;
+          if(plan.reportedHash)await clearReportedRepairTarget(env,plan.reportedHash,deps);
+        }
+      }catch(e){errors.push(e?.code||"WRITE_FAILED");stopped=true;break;}
     }
   }
   return {
@@ -590,11 +665,13 @@ async function run(env,scheduledTime=Date.now(),deps={}){
     scanned:batch.items.length,
     fastLaneScanned:explicitQueue.length,
     fastLaneCandidates:fastPlans.length,
+    reportedLaneScanned:reportedQueue.length,
+    reportedLaneCandidates:reportedPlans.length,
     nearZeroLaneScanned:nearZeroQueue.length,
     nearZeroLaneCandidates:nearZeroPlans.length,
     ancientLaneScanned:ancientQueue.length,
     ancientLaneCandidates:ancientPlans.length,
-    candidates:fastPlans.length+nearZeroPlans.length+ancientPlans.length+plans.length,
+    candidates:fastPlans.length+reportedPlans.length+nearZeroPlans.length+ancientPlans.length+plans.length,
     attemptedWrites:attempted,
     verifiedWrites:verified,
     stopped,
@@ -605,4 +682,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,REPORTED_REPAIR_RETRY_MS,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};

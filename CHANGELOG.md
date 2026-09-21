@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1 — 2026-09-22
+
+- Adds a bounded privacy-safe reported issue lane for Continue Watching items that have been explicitly reported as visibly wrong.
+- Reported items are represented only by 16-character item hashes in the private D1 store, with expiry and retry timing. No title, raw media ID, watched bitmap or account credential is stored in the queue.
+- A reported item receives priority for one of the existing normal two write slots only when it independently passes the same near-zero, alias, watched-transition or completion decision that would permit an ordinary repair.
+- Keeps explicit watched-intent priority unchanged and does not increase the existing normal write ceiling.
+- Successful reported repairs remove their private queue entry. Failed attempts are retained with a one-hour retry delay rather than being retried every cron cycle.
+- Adds end-to-end regressions proving two eligible reported items can consume the existing two safe write slots without duplicate planning and an ineligible reported item remains untouched.
+
 ## 1.7.0 — 2026-09-21
 
 - Adds a bounded near-zero resume fast lane for series and films whose positive `timeOffset` is no more than one second after the existing 30 minute playback quiet window.
