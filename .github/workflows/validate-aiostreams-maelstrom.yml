@@ -1,4 +1,5 @@
 name: Validate AIOStreams Maelstrom hardening
+# registered-validator trigger
 # retrigger after workflow establishment
 
 on:
