@@ -2,14 +2,30 @@
 set -euo pipefail
 
 query(){
-  local payload="$1"
-  local response
-  response="$(curl -fsS -X POST     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"     -H 'Content-Type: application/json'     --data "$payload"     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
-  node -e 'const x=JSON.parse(process.argv[1]);if(!x.success||(x.result||[]).some(r=>r.success===false))process.exit(2)' "$response"
+  local label="$1"
+  local payload="$2"
+  printf '%s\n' "$label" > cw-diagnostic-setup-stage.txt
+  local http
+  http="$(curl -sS -o d1-response.json -w '%{http_code}' -X POST     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"     -H 'Content-Type: application/json'     --data "$payload"     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
+  export D1_HTTP="$http"
+  node - <<'NODE'
+const fs=require("fs");
+const http=String(process.env.D1_HTTP||"");
+let x;
+try{x=JSON.parse(fs.readFileSync("d1-response.json","utf8"));}catch{process.exit(2)}
+const failed=!x.success||(x.result||[]).some(r=>r.success===false)||!/^2\d\d$/.test(http);
+if(failed){
+  const e=x.errors?.[0]||x.result?.find?.(r=>r.success===false)?.error||{};
+  const code=String(e.code??e).replace(/[^A-Za-z0-9]/g,"").slice(0,32)||"unknown";
+  const stage=fs.readFileSync("cw-diagnostic-setup-stage.txt","utf8").trim().replace(/[^A-Za-z0-9_-]/g,"");
+  fs.writeFileSync("cw-diagnostic-setup-stage.txt",stage+"_http"+http+"_code"+code+"\n");
+  process.exit(3);
+}
+NODE
 }
 
-query '{"sql":"CREATE TABLE IF NOT EXISTS diagnostic_targets_v1 (item_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)"}'
-query '{"sql":"CREATE TABLE IF NOT EXISTS diagnostic_results_v1 (item_hash TEXT PRIMARY KEY, observed_at INTEGER NOT NULL, payload TEXT NOT NULL)"}'
+query "create_targets" '{"sql":"CREATE TABLE IF NOT EXISTS diagnostic_targets_v1 (item_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)"}'
+query "create_results" '{"sql":"CREATE TABLE IF NOT EXISTS diagnostic_results_v1 (item_hash TEXT PRIMARY KEY, observed_at INTEGER NOT NULL, payload TEXT NOT NULL)"}'
 
 expires="$(( $(date +%s%3N) + 6*60*60*1000 ))"
 export DIAGNOSTIC_EXPIRES="$expires"
@@ -25,9 +41,10 @@ process.stdout.write(JSON.stringify({
 }));
 NODE
 )"
-query "$payload"
+query "insert_targets" "$payload"
 
 cleanup="$(node -e 'process.stdout.write(JSON.stringify({sql:"DELETE FROM diagnostic_targets_v1 WHERE expires_at < ?",params:[Number(process.env.DIAGNOSTIC_EXPIRES)-6*60*60*1000]}))')"
-query "$cleanup"
+query "cleanup_targets" "$cleanup"
 
+printf 'passed\n' > cw-diagnostic-setup-stage.txt
 echo "diagnostic_targets_ready"
