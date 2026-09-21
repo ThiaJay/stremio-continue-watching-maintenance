@@ -19,6 +19,8 @@ if(!b.success||!o.success||!s.success) process.exit(2);
 const br=b.result?.[0]?.results?.[0]||{};
 const or=o.result?.[0]?.results?.[0]||null;
 const sr=s.result?.[0]?.results?.[0]||{};
+let errorCodes=[];
+try{ errorCodes=JSON.parse(sr.error_codes||"[]"); }catch{}
 const safe={
   backups:Number(br.c||0),
   backupLatest:Number(br.latest||0),
@@ -43,7 +45,8 @@ const safe={
     candidates:Number(sr.candidates||0),
     attempted:Number(sr.attempted_writes||0),
     verified:Number(sr.verified_writes||0),
-    stopped:Number(sr.stopped||0)
+    stopped:Number(sr.stopped||0),
+    errorCodes:errorCodes.map(x=>String(x).replace(/[^A-Za-z0-9_]/g,"").slice(0,40)).slice(0,6)
   }
 };
 fs.writeFileSync("cw-diagnosis.json",JSON.stringify(safe,null,2)+"\n");
@@ -51,7 +54,8 @@ const o2=safe.observation;
 const m=safe.maintenance;
 let context="cw-target_b"+safe.backups;
 context+=o2?"_off"+o2.offset+"_tw"+o2.watched+"_f"+o2.flag+"_vh"+o2.video+"_mh"+o2.marker:"_obs-missing";
-context+="_batch"+m.batch+"of"+m.batches+"_c"+m.candidates+"_v"+m.verified;
+context+="_batch"+m.batch+"of"+m.batches+"_c"+m.candidates+"_a"+m.attempted+"_v"+m.verified+"_s"+m.stopped;
+if(m.errorCodes.length) context+="_e"+m.errorCodes.join("-");
 fs.writeFileSync("cw-diagnosis-context.txt",context.slice(0,96)+"\n");
 console.log(JSON.stringify(safe));
 NODE
