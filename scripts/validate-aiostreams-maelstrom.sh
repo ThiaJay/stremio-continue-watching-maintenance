@@ -46,8 +46,10 @@ if(!dateOk) {
 console.log("production_contract_ok");
 NODE
 
+printf 'source_fetch\n' > validation-stage.txt
 curl -fsS   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"   -D response-headers.txt   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content/v2"   -o worker-content.bin
 
+printf 'source_decode\n' > validation-stage.txt
 python3 - <<'PY'
 from email.parser import BytesParser
 from email.policy import default
