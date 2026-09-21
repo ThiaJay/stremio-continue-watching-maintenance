@@ -241,8 +241,9 @@ cat > validate.mjs <<'NODE'
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
-globalThis.crypto=globalThis.crypto||crypto.webcrypto;
 const mark=(name)=>fs.writeFileSync("validation-stage.txt","reg_"+name+"\n");
+mark("startup");
+if(!globalThis.crypto) Object.defineProperty(globalThis,"crypto",{value:crypto.webcrypto,configurable:true});
 
 mark("import");
 let mod;
