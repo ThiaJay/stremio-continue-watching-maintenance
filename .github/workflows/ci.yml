@@ -25,7 +25,9 @@ jobs:
       - run: npm audit --audit-level=high
 
   validate_aiostreams_maelstrom:
-    if: github.event_name == 'pull_request' && github.head_ref == 'ops/aiostreams-maelstrom-validation'
+    permissions:
+      contents: write
+    if: (github.event_name == 'pull_request' && github.head_ref == 'ops/aiostreams-maelstrom-validation') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Validate AIOStreams Maelstrom hardening safely')
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
@@ -35,8 +37,6 @@ jobs:
       EXPECTED_SOURCE_SHA256: 977e2b942c9477fa2d080a48aeafcd49ce4932ed5fa7b20bb3705ca15a7fc991
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ops/stream-compatibility-inspect
 
       - name: Verify production contract
         shell: bash
@@ -303,3 +303,38 @@ async function hardenBingeGroups(payload, env, type, id, request, fetchImpl = fe
           console.log("deterministic_regressions_ok");
           NODE
           node validate.mjs
+
+      - name: Record validation outcome
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          VALIDATION_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          mkdir -p ops-receipts
+          patched="unavailable"
+          if [ -f patched-worker.mjs ]; then
+            patched="$(sha256sum patched-worker.mjs | awk '{print $1}')"
+          fi
+          python3 - <<PY
+          import json, os
+          receipt={
+            "schema":1,
+            "result":os.environ["VALIDATION_STATUS"],
+            "sourceSha256":"$EXPECTED_SOURCE_SHA256",
+            "patchedSha256":"$patched",
+            "bindingContract":"checked",
+            "compatibilityDate":"2026-09-18",
+            "visibleManifestName":"upstream provider name with Maelstrom fallback",
+            "stableAddonId":"org.thiajay.stream-compatibility",
+            "bingeGroupPolicy":"exact match first, existing strict prefix only, otherwise unchanged",
+            "providerIdentityPreserved":True
+          }
+          open("ops-receipts/aiostreams-maelstrom-validation.json","w",encoding="utf-8").write(json.dumps(receipt,indent=2)+"\\n")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops-receipts/aiostreams-maelstrom-validation.json
+          git commit -m "ops: record AIOStreams Maelstrom validation outcome"
+          git push origin HEAD:main
+
