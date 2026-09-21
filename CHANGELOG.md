@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.4 — 2026-09-21
+
+- Adds a bounded stale-residual rule for a fully watched series whose final released episode is left with a tiny resume pointer of 15 seconds or less.
+- Requires every released normal-season episode to be watched, the pointer to remain on the final released episode and playback inactivity of at least 24 hours when per-video watch time does not independently cross the native 70% threshold.
+- Preserves recent tiny pointers as possible intentional rewatches.
+- Adds an exact privacy-safe regression matching the live Once Upon a Time in Northern Ireland state: 12.918 second offset, 12.893 seconds watched, 4,509.040 second duration, movie flag zero and playback stale since 23 September 2025.
+- Keeps all metadata identity, watched-anchor, D1 backup, concurrency and exact-field readback protections unchanged.
+
+
 ## 1.6.3 — 2026-09-21
 
 - Fixes completed series remaining in Continue Watching when every released episode is watched but the movie-only `flaggedWatched` field is zero.
