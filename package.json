@@ -1,6 +1,6 @@
 {
   "name": "stremio-watch-state-maintenance",
-  "version": "1.6.7",
+  "version": "1.6.8",
   "private": true,
   "type": "module",
   "description": "Automatic cross-platform cleanup of stale completed Continue Watching progress in Stremio",

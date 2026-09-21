@@ -347,6 +347,27 @@ async function prune(env,now){
   if(!env.BACKUP_DB?.prepare)return;
   await env.BACKUP_DB.prepare("DELETE FROM watch_backups WHERE expires_at < ?").bind(now).run();
 }
+function readbackMismatchCode(confirm,candidate,after){
+  if(!after)return "READBACK_MISSING";
+  if(Number(after.state?.timeOffset)===0)return null;
+  const beforeMtime=String(confirm?._mtime||"");
+  const candidateMtime=String(candidate?._mtime||"");
+  const afterMtime=String(after?._mtime||"");
+  if(afterMtime===candidateMtime)return "READBACK_OFFSET_MISMATCH_MTIME_APPLIED";
+  if(afterMtime===beforeMtime)return "READBACK_OFFSET_MISMATCH_UNCHANGED";
+  return "READBACK_OFFSET_MISMATCH_DRIFT";
+}
+async function readbackAfterWrite(env,id,deps={}){
+  const waits=Array.isArray(deps.readbackDelays)&&deps.readbackDelays.length?deps.readbackDelays:[0,250,750,1500];
+  let last=null;
+  for(const wait of waits){
+    await (deps.sleep||sleep)(Math.max(0,Number(wait)||0));
+    const [row]=await library(env,[id],deps);
+    if(row)last=row;
+    if(row&&Number(row.state?.timeOffset)===0)return row;
+  }
+  return last;
+}
 async function apply(env,plan,expected,deps={}){
   assert(await accountFingerprint(env,deps)===expected,"ACCOUNT_CHANGED");
   const [current]=await library(env,[plan.id],deps);assert(current,"ITEM_MISSING");
@@ -356,9 +377,10 @@ async function apply(env,plan,expected,deps={}){
   const candidate=structuredClone(confirm);candidate.state.timeOffset=0;candidate._mtime=new Date((deps.now||Date.now)()).toISOString();
   const backupKey=await backup(env,{schema:1,createdAt:new Date((deps.now||Date.now)()).toISOString(),account:expected,before:confirm,candidate,reason:plan.reason});
   const outcome=await putOnce(env,candidate,deps);
-  const [after]=await library(env,[plan.id],deps);assert(after,"READBACK_MISSING");
+  const after=await readbackAfterWrite(env,plan.id,deps);
+  assert(after,"READBACK_MISSING");
   if(outcome.kind!=="confirmed"&&Number(after.state?.timeOffset)!==0)throw new StateError("WRITE_UNCONFIRMED");
-  assert(Number(after.state?.timeOffset)===0,"READBACK_OFFSET_MISMATCH");
+  if(Number(after.state?.timeOffset)!==0)throw new StateError(readbackMismatchCode(confirm,candidate,after)||"READBACK_OFFSET_MISMATCH");
   const a=structuredClone(confirm),b=structuredClone(after);delete a._mtime;delete b._mtime;a.state={...a.state};b.state={...b.state};delete a.state.timeOffset;delete b.state.timeOffset;
   assert(canonical(a)===canonical(b),"UNRELATED_STATE_CHANGED");
   return {status:"VERIFIED",backupKey};
@@ -457,4 +479,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,readbackMismatchCode,readbackAfterWrite,run,apply};
