@@ -5,10 +5,11 @@ printf "deployment_check\n" > cw-v167-acceptance-stage.txt
 for attempt in $(seq 1 30); do
   deployments="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/deployments")"
   active_id="$(node -e 'const x=JSON.parse(process.argv[1]);const ds=x.result?.deployments||x.result||[];const d=Array.isArray(ds)?ds[0]:null;if(!x.success||!d)process.exit(2);process.stdout.write(String(d.id||""))' "$deployments")"
-  case "$active_id" in
+  active_normalized="$(printf '%s' "$active_id" | tr -cd 'A-Za-z0-9')"
+  case "$active_normalized" in
     "$EXPECTED_DEPLOYMENT_PREFIX"*) ;;
     *)
-      current_prefix="$(printf '%s' "$active_id" | tr -cd 'A-Za-z0-9' | head -c 12)"
+      current_prefix="$(printf '%s' "$active_normalized" | head -c 12)"
       printf 'deployment_mismatch_%s\n' "$current_prefix" > cw-v167-acceptance-stage.txt
       echo "::error::v1.6.7 expected deployment prefix does not match current deployment"
       exit 2
