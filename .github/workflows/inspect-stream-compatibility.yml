@@ -69,3 +69,69 @@ jobs:
                   print(f"{n+1}: {line[:500]}")
           PY
 
+      - name: Sample configured upstream bingeGroup continuity without exposing private values
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          settings="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
+          d1id="$(node -e '
+            const x=JSON.parse(process.argv[1]);
+            const b=(x.result?.bindings||[]).find(v=>v.name==="BINDINGS_DB"&&(v.type==="d1"||v.type==="d1_database"));
+            if(!x.success||!b)process.exit(2);
+            process.stdout.write(String(b.id||b.database_id||""));
+          ' "$settings")"
+          test -n "$d1id"
+
+          body='{"sql":"SELECT current_root FROM provider_bindings WHERE provider = ? LIMIT 1","params":["maelstrom"]}'
+          binding="$(curl -fsS -X POST             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H 'Content-Type: application/json'             --data "$body"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$d1id/query")"
+          root="$(node -e '
+            const x=JSON.parse(process.argv[1]);
+            const r=x.result?.[0]?.results?.[0];
+            if(!x.success||!r?.current_root)process.exit(2);
+            process.stdout.write(String(r.current_root).replace(/\/$/,""));
+          ' "$binding")"
+
+          for id in tt27837209:1:4 tt27837209:1:5; do
+            curl -fsS "$root/stream/series/$id.json" -o "stream-${id##*:}.json"
+          done
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const crypto=require('crypto');
+
+          function clean(file){
+            const x=JSON.parse(fs.readFileSync(file,'utf8'));
+            const streams=Array.isArray(x?.streams)?x.streams:[];
+            return streams.map((s,index)=>{
+              const group=typeof s?.behaviorHints?.bingeGroup==='string'&&s.behaviorHints.bingeGroup.length?s.behaviorHints.bingeGroup:null;
+              const filename=String(s?.behaviorHints?.filename||'');
+              const identity=JSON.stringify({
+                index,
+                groupHash:group?crypto.createHash('sha256').update(group).digest('hex').slice(0,16):null,
+                hasGroup:Boolean(group),
+                filenameShape:filename.replace(/[0-9]+/g,'#').slice(0,120),
+                hasInfoHash:Boolean(s?.infoHash),
+                hasUrl:Boolean(s?.url),
+                fileIdx:Number.isInteger(s?.fileIdx)?s.fileIdx:null
+              });
+              return JSON.parse(identity);
+            });
+          }
+
+          const a=clean('stream-4.json');
+          const b=clean('stream-5.json');
+          console.log('episode4_stream_count',a.length);
+          console.log('episode5_stream_count',b.length);
+          console.log('episode4_grouped',a.filter(x=>x.hasGroup).length);
+          console.log('episode5_grouped',b.filter(x=>x.hasGroup).length);
+          console.log('episode4_group_hashes',JSON.stringify(a.map(x=>x.groupHash)));
+          console.log('episode5_group_hashes',JSON.stringify(b.map(x=>x.groupHash)));
+          console.log('same_index_group_matches',a.slice(0,Math.min(a.length,b.length)).filter((x,i)=>x.groupHash&&x.groupHash===b[i]?.groupHash).length);
+          console.log('episode4_shapes',JSON.stringify(a.map(x=>({index:x.index,filenameShape:x.filenameShape,hasGroup:x.hasGroup,hasInfoHash:x.hasInfoHash,hasUrl:x.hasUrl,fileIdx:x.fileIdx}))));
+          console.log('episode5_shapes',JSON.stringify(b.map(x=>({index:x.index,filenameShape:x.filenameShape,hasGroup:x.hasGroup,hasInfoHash:x.hasInfoHash,hasUrl:x.hasUrl,fileIdx:x.fileIdx}))));
+          NODE
+
