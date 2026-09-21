@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.3 — 2026-09-21
+
+- Fixes completed series remaining in Continue Watching when every released episode is watched but the movie-only `flaggedWatched` field is zero.
+- Uses the canonical episode watched bitmap as the series completion authority, matching Stremio Core's series state model.
+- Keeps existing metadata identity proof, watched-anchor validation, final released episode pointer, playback quiet-time and native watched-threshold guards.
+- Leaves movie completion semantics unchanged.
+- Adds a five-episode regression for *Once Upon a Time in Northern Ireland* proving a fully watched series with `flaggedWatched: 0` is eligible for stale progress cleanup.
+- Clarifies that the residual-pointer path also relies on episode watched state and Core watch-time evidence rather than the movie-only flag.
+
+
 ## 1.4.0 — 2026-09-19
 
 - Adds explicit-movie watched-transition handling so **Mark as watched** can clear stale Continue Watching progress without seeking to the end of the film.
