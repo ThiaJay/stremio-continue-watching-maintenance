@@ -62,6 +62,44 @@ test("bitmap decoder round-trips current watched state",async()=>{
   const ids=videos().map(v=>v.id),field=await encode([true,false,true],ids);
   assert.deepEqual(await decodeWatched(field,ids),[true,false,true]);
 });
+test("Once Upon a Time in Northern Ireland clears after all five episodes are watched without a movie flag",async()=>{
+  const id="tt27837209";
+  const meta={id,type:"series",videos:[
+    {id:`${id}:1:1`,season:1,episode:1,released:"2023-05-22T00:00:00Z"},
+    {id:`${id}:1:2`,season:1,episode:2,released:"2023-05-29T00:00:00Z"},
+    {id:`${id}:1:3`,season:1,episode:3,released:"2023-06-05T00:00:00Z"},
+    {id:`${id}:1:4`,season:1,episode:4,released:"2023-06-12T00:00:00Z"},
+    {id:`${id}:1:5`,season:1,episode:5,released:"2023-06-19T00:00:00Z"}
+  ]};
+  const ids=meta.videos.map(v=>v.id);
+  const mtime=NOW-2*24*60*60*1000;
+  const item={
+    _id:id,type:"series",name:"Once Upon a Time in Northern Ireland",removed:false,temp:false,_mtime:new Date(mtime).toISOString(),
+    state:{
+      lastWatched:new Date(mtime).toISOString(),
+      timeWatched:3_400_000,
+      timeOffset:3_400_000,
+      overallTimeWatched:17_000_000,
+      timesWatched:0,
+      flaggedWatched:0,
+      duration:3_600_000,
+      video_id:`${id}:1:5`,
+      watched:await encode([true,true,true,true,true],ids),
+      noNotif:false
+    },
+    poster:null,posterShape:"poster",behaviorHints:{}
+  };
+  const d=await completionDecision(item,meta,NOW);
+  assert.equal(d?.id,id);
+  assert.equal(d?.reason,"fully-watched-final-released-episode-stale-progress");
+});
+
+test("series completion does not depend on flaggedWatched because Core uses the episode bitmap",async()=>{
+  const item=await libraryItem({flagged:0});
+  const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
+  assert.equal(d?.id,"tt12345");
+});
+
 test("fully watched final released episode with stale completed progress is correctable",async()=>{
   const item=await libraryItem();const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
   assert.equal(d?.id,"tt12345");
