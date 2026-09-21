@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.7 — 2026-09-21
+
+- Prevents an ancient-residual item from being planned twice when it is selected by both the bounded fast lane and the current ordinary rotating batch.
+- Excludes already-planned ancient fast-lane item IDs from ordinary batch evaluation.
+- Keeps the existing fast-lane selection, full metadata and watched-bitmap proof and normal two-write ceiling unchanged.
+- Adds an end-to-end overlap regression requiring exactly one account write, one verified result and no stop condition when the same item belongs to both lanes.
+
 ## 1.6.6 — 2026-09-21
 
 - Adds a bounded ancient-residual fast lane so clearly stale tiny completed-series pointers do not have to wait for the full rotating Continue Watching scan.
