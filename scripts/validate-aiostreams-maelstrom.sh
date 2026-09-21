@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+printf 'production_contract\n' > validation-stage.txt
 settings="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
 node - <<'NODE' "$settings"
 const x=JSON.parse(process.argv[2]);
@@ -54,6 +55,7 @@ open("live-worker.mjs","wb").write(found)
 print("source_hash_ok",digest)
 PY
 
+printf 'source_patch\n' > validation-stage.txt
 python3 - <<'PY'
 from pathlib import Path
 
@@ -167,8 +169,10 @@ Path("patched-worker.mjs").write_text(text,encoding="utf-8")
 print("patch_applied")
 PY
 
+printf 'syntax_check\n' > validation-stage.txt
 node --check patched-worker.mjs
 
+printf 'regression_tests\n' > validation-stage.txt
 cat > validate.mjs <<'NODE'
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -253,3 +257,4 @@ console.log("deterministic_regressions_ok");
 NODE
 
 node validate.mjs
+printf 'passed\n' > validation-stage.txt
