@@ -68,3 +68,23 @@ jobs:
           open("validation-status.json","w",encoding="utf-8").write(json.dumps(payload))
           PY
           curl -fsS -X POST             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             --data @validation-status.json             "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+          if [ -f validation-contract.json ]; then
+            node - <<'NODE'
+            const fs=require("fs");
+            const x=JSON.parse(fs.readFileSync("validation-contract.json","utf8"));
+            const safeBindings=(x.actual||[]).map(v=>String(v.name||"")+"="+String(v.type||"")).join(",");
+            fs.writeFileSync("binding-status.json",JSON.stringify({
+              state:x.bindingsOk?"success":"failure",
+              context:"aiostreams-maelstrom-bindings",
+              description:(x.bindingsOk?"Bindings match: ":"Bindings differ: ")+safeBindings
+            }));
+            fs.writeFileSync("date-status.json",JSON.stringify({
+              state:x.dateOk?"success":"failure",
+              context:"aiostreams-maelstrom-compat-date",
+              description:"Compatibility date "+String(x.compatibilityDate||"<missing>")
+            }));
+            NODE
+            for payload in binding-status.json date-status.json; do
+              curl -fsS -X POST                 -H "Authorization: Bearer $GH_TOKEN"                 -H "Accept: application/vnd.github+json"                 -H "X-GitHub-Api-Version: 2022-11-28"                 --data @"$payload"                 "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+            done
+          fi
