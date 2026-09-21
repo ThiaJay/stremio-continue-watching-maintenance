@@ -17,3 +17,5 @@ v1.6.7 post deployment verification.
 v1.6.7 guarded write outcome diagnosis.
 
 Expose exact safe maintenance error code.
+
+Prioritise guarded write error.
