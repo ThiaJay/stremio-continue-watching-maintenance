@@ -14,6 +14,7 @@ const ANCIENT_RESIDUAL_STALE_MS=30*24*60*60*1000;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
 const BULK_WATCHED_TRANSITION_WINDOW_MS=2*60*60*1000;
+const DIAGNOSTIC_TARGET_HASHES=["d50710896150aed6","5802dbc5fda6b745","c13774ae113c75c9"];
 
 class StateError extends Error{constructor(code){super(code);this.name="StateError";this.code=code;}}
 const assert=(x,code)=>{if(!x)throw new StateError(code);};
@@ -323,6 +324,86 @@ async function selectExplicitTransitionItems(items,observations,scheduledTime){
   return candidates.slice(0,EXPLICIT_BATCH_SIZE);
 }
 
+async function recordDiagnosticTargets(env,rows,byId,observations,now,deps={}){
+  if(!env.BACKUP_DB?.prepare)return 0;
+  const targets=Array.isArray(deps.diagnosticTargets)?deps.diagnosticTargets:DIAGNOSTIC_TARGET_HASHES;
+  const safeTargets=[...new Set(targets.map(x=>String(x||"").toLowerCase()).filter(x=>/^[0-9a-f]{16}$/.test(x)))].slice(0,12);
+  if(!safeTargets.length)return 0;
+  if(!deps.skipDiagnosticSchema){
+    try{
+      await env.BACKUP_DB.prepare("CREATE TABLE IF NOT EXISTS diagnostic_results_v1 (item_hash TEXT PRIMARY KEY, observed_at INTEGER NOT NULL, payload TEXT NOT NULL)").run();
+    }catch{return 0;}
+  }
+  const wanted=new Set(safeTargets),matched=new Map();
+  for(const item of rows){
+    const key=await observationKey(item);
+    if(wanted.has(key))matched.set(key,item);
+  }
+  let written=0;
+  for(const itemHash of safeTargets){
+    const item=matched.get(itemHash)||null;
+    let meta=null;
+    if(item?.type==="series"&&/^tt\d{5,12}$/.test(String(item._id||""))&&watchedAnchor(item?.state?.watched)){
+      try{meta=await metadata(env,item,deps);}catch{}
+    }
+    let snapshot;
+    if(!item)snapshot={present:0};
+    else{
+      snapshot={
+        present:1,
+        mediaType:String(item.type||""),
+        canonical:/^tt\d{5,12}$/.test(String(item._id||""))?1:0,
+        legacyAlias:String(item._id||"").startsWith("tmdb:")?1:0,
+        removed:item.removed?1:0,
+        temp:item.temp?1:0,
+        timeOffset:Number(item.state?.timeOffset)||0,
+        timeWatched:Number(item.state?.timeWatched)||0,
+        duration:Number(item.state?.duration)||0,
+        timesWatched:Number(item.state?.timesWatched)||0,
+        flaggedWatched:Number(item.state?.flaggedWatched)||0,
+        playbackAgeMs:Math.max(0,now-playbackActivityTime(item)),
+        watchedAnchor:watchedAnchor(item.state?.watched)?1:0,
+        metadataStatus:"NOT_APPLICABLE",
+        releasedCount:0,
+        watchedReleasedCount:0,
+        allReleasedWatched:0,
+        pointerWatched:0,
+        pointerFinal:0,
+        completionReason:"",
+        transitionReason:"",
+        aliasReason:"",
+        ancientSelector:selectAncientResidualItems([item],now).length?1:0
+      };
+      if(snapshot.legacyAlias){
+        snapshot.aliasReason=String(legacyAliasDecision(item,byId,now)?.reason||"");
+      }else if(item.type==="series"&&snapshot.canonical){
+        if(!meta)snapshot.metadataStatus="NO_TRUSTED_METADATA";
+        else{
+          try{
+            snapshot.metadataStatus="OK";
+            const videos=orderedVideos(meta),ids=videos.map(v=>String(v.id)),bits=await decodeWatched(item.state?.watched,ids);
+            const released=videos.map((v,i)=>({v,i,info:episodeInfo(v)}))
+              .filter(x=>x.info&&x.info.season>0&&(!x.v.released||Date.parse(x.v.released)<=now));
+            snapshot.releasedCount=released.length;
+            snapshot.watchedReleasedCount=released.filter(({i})=>bits[i]===true).length;
+            snapshot.allReleasedWatched=released.length>0&&snapshot.watchedReleasedCount===released.length?1:0;
+            const pointerIndex=ids.indexOf(String(item.state?.video_id||""));
+            snapshot.pointerWatched=pointerIndex>=0&&bits[pointerIndex]===true?1:0;
+            snapshot.pointerFinal=released.length>0&&String(item.state?.video_id||"")===String(released.at(-1).v.id)?1:0;
+            snapshot.completionReason=String((await completionDecision(item,meta,now))?.reason||"");
+            snapshot.transitionReason=String((await bulkWatchedTransitionDecision(item,meta,observations.get(itemHash),now))?.reason||"");
+          }catch(error){
+            snapshot.metadataStatus=String(error?.code||"DIAGNOSTIC_EVALUATION_FAILED").replace(/[^A-Z0-9_]/gi,"").slice(0,64);
+          }
+        }
+      }
+    }
+    await env.BACKUP_DB.prepare("INSERT INTO diagnostic_results_v1 (item_hash,observed_at,payload) VALUES (?,?,?) ON CONFLICT(item_hash) DO UPDATE SET observed_at=excluded.observed_at,payload=excluded.payload")
+      .bind(itemHash,now,JSON.stringify(snapshot)).run();
+    written++;
+  }
+  return written;
+}
 function b64(bytes){let s="";for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 function unb64(v){const p=v.replace(/-/g,"+").replace(/_/g,"/")+"===".slice((v.length+3)%4);return Uint8Array.from(atob(p),c=>c.charCodeAt(0));}
 async function cryptoKey(secret){
@@ -397,6 +478,7 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   const rows=await library(env,[],deps),byId=new Map(rows.map(x=>[x._id,x])),batch=selectBatch(rows,scheduledTime),plans=[],fastPlans=[],ancientPlans=[],errors=[];
   let observations=new Map();
   try{observations=await observeWatchedChanges(env,rows,scheduledTime);}catch(e){errors.push(e?.code||"OBSERVATION_FAILED");}
+  try{await recordDiagnosticTargets(env,rows,byId,observations,scheduledTime,deps);}catch{}
 
   let explicitQueue=[];
   try{explicitQueue=await selectExplicitTransitionItems(rows,observations,scheduledTime);}catch(e){errors.push(e?.code||"EXPLICIT_QUEUE_FAILED");}
@@ -479,4 +561,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,readbackMismatchCode,readbackAfterWrite,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectAncientResidualItems,selectExplicitTransitionItems,recordDiagnosticTargets,readbackMismatchCode,readbackAfterWrite,run,apply};
