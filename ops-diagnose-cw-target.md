@@ -11,3 +11,5 @@ Post batch 3 verification.
 Batch 3 settled recheck.
 
 Hashed identity diagnostic.
+
+v1.6.7 post deployment verification.
