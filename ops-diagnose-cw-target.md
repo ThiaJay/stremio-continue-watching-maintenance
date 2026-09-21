@@ -19,3 +19,5 @@ v1.6.7 guarded write outcome diagnosis.
 Expose exact safe maintenance error code.
 
 Prioritise guarded write error.
+
+v1.6.8 post-cron verification.
