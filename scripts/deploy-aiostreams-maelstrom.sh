@@ -69,12 +69,28 @@ test "${#candidate_hash}" -eq 64
 
 printf 'content_put\n' > deployment-stage.txt
 printf '%s' '{"main_module":"worker.js"}' > metadata.json
-response="$(curl -fsS -X PUT \
+http_code="$(curl -sS -o content-response.json -w '%{http_code}' -X PUT \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -F 'metadata=@metadata.json;type=application/json' \
   -F 'worker.js=@patched-worker.mjs;type=application/javascript+module' \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content")"
-node -e 'const x=JSON.parse(process.argv[1]);if(!x.success){console.error(JSON.stringify(x.errors||[]));process.exit(1)};console.log("content_update_accepted")' "$response"
+export CONTENT_HTTP_CODE="$http_code"
+node - <<'NODE'
+const fs=require("fs");
+const x=JSON.parse(fs.readFileSync("content-response.json","utf8"));
+const http=String(process.env.CONTENT_HTTP_CODE||"unknown");
+if(!x.success){
+  const code=String(x.errors?.[0]?.code??"unknown").replace(/[^A-Za-z0-9]/g,"").slice(0,20);
+  fs.writeFileSync("deployment-stage.txt","content_put_http"+http+"_code"+code+"\n");
+  console.error("Cloudflare content update rejected",http,code);
+  process.exit(1);
+}
+if(!/^2\d\d$/.test(http)){
+  fs.writeFileSync("deployment-stage.txt","content_put_http"+http+"_unexpected\n");
+  process.exit(1);
+}
+console.log("content_update_accepted");
+NODE
 
 printf 'settings_after\n' > deployment-stage.txt
 settings_after="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
