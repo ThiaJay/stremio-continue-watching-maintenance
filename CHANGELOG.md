@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.6 — 2026-09-21
+
+- Adds a bounded ancient-residual fast lane so clearly stale tiny completed-series pointers do not have to wait for the full rotating Continue Watching scan.
+- Preselects only canonical series with a watched anchor, a positive offset of 15 seconds or less, per-video watch time of 15 seconds or less and at least 30 days of playback inactivity.
+- Still requires the full trusted metadata identity proof, complete released-normal-season watched bitmap and watched pointed episode before creating a repair plan.
+- Caps the fast-lane scan at 12 items and shares the existing two-write normal repair ceiling with the ordinary rotating batch.
+- Keeps explicit watched-transition writes on their existing independent bounded lane.
+- Adds end-to-end coverage proving an eligible ancient residual outside the ordinary batch is repaired through the same encrypted-backup and exact-readback path.
+
 ## 1.6.5 — 2026-09-21
 
 - Extends stale residual cleanup to an already watched older episode only when the series is otherwise completely watched and the residual is clearly ancient.
