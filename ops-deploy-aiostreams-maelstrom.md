@@ -7,3 +7,5 @@ Retry with staged proof.
 Retry with Cloudflare rejection classification.
 
 Retry with sanitised Cloudflare validation detail.
+
+Retry with expanded bounded error classification.
