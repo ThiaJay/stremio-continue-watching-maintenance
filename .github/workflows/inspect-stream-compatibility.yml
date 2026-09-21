@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -D response-headers.txt             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content"             -o worker-content.bin
+          curl -fsS             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -D response-headers.txt             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content/v2"             -o worker-content.bin
           python3 - <<'PY'
           import hashlib, re
           from email.parser import BytesParser
