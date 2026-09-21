@@ -52,10 +52,14 @@ const safe={
 fs.writeFileSync("cw-diagnosis.json",JSON.stringify(safe,null,2)+"\n");
 const o2=safe.observation;
 const m=safe.maintenance;
-let context="cw-target_b"+safe.backups;
-context+=o2?"_off"+o2.offset+"_tw"+o2.watched+"_f"+o2.flag+"_vh"+o2.video+"_mh"+o2.marker:"_obs-missing";
-context+="_batch"+m.batch+"of"+m.batches+"_c"+m.candidates+"_a"+m.attempted+"_v"+m.verified+"_s"+m.stopped;
-if(m.errorCodes.length) context+="_e"+m.errorCodes.join("-");
+let context;
+if(m.errorCodes.length){
+  context="cw-write_b"+safe.backups+"_off"+(o2?o2.offset:"missing")+"_a"+m.attempted+"_v"+m.verified+"_s"+m.stopped+"_e"+m.errorCodes.join("-");
+}else{
+  context="cw-target_b"+safe.backups;
+  context+=o2?"_off"+o2.offset+"_tw"+o2.watched+"_f"+o2.flag+"_vh"+o2.video+"_mh"+o2.marker:"_obs-missing";
+  context+="_batch"+m.batch+"of"+m.batches+"_c"+m.candidates+"_a"+m.attempted+"_v"+m.verified+"_s"+m.stopped;
+}
 fs.writeFileSync("cw-diagnosis-context.txt",context.slice(0,96)+"\n");
 console.log(JSON.stringify(safe));
 NODE
