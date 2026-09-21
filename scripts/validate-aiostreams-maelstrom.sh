@@ -21,7 +21,13 @@ const compatibilityDate=String(x.result?.compatibility_date||"");
 const bindingsOk=JSON.stringify(actual)===JSON.stringify(expected);
 const dateOk=compatibilityDate==="2026-09-18";
 const shortNames={ACCESS_PATH_TOKEN:"APT",BINDINGS_DB:"BDB",MAELSTROM_ROOT:"MR",METADATA:"META"};
-const contractStage="contract_"+actual.map(v=>(shortNames[v.name]||String(v.name||"X").slice(0,8))+"-"+String(v.type||"missing").replace(/[^A-Za-z0-9]/g,"").slice(0,12)).join("_")+"_date-"+compatibilityDate.replace(/[^0-9]/g,"");
+const actualMap=new Map(actual.map(v=>[v.name,v.type]));
+const expectedMap=new Map(expected.map(v=>[v.name,v.type]));
+const diffs=[];
+for(const v of expected){ if(actualMap.get(v.name)!==v.type) diffs.push((shortNames[v.name]||v.name)+"-"+String(actualMap.get(v.name)||"missing").replace(/[^A-Za-z0-9]/g,"").slice(0,12)); }
+for(const v of actual){ if(!expectedMap.has(v.name)) diffs.push("EXTRA-"+String(v.name||"X").replace(/[^A-Za-z0-9]/g,"").slice(0,16)+"-"+String(v.type||"missing").replace(/[^A-Za-z0-9]/g,"").slice(0,10)); }
+if(!dateOk) diffs.push("DATE-"+compatibilityDate.replace(/[^0-9]/g,""));
+const contractStage="contractdiff_"+(diffs.length?diffs.join("_"):"none");
 fs.writeFileSync("validation-stage.txt",contractStage.slice(0,96)+"\n");
 fs.writeFileSync("validation-contract.json",JSON.stringify({actual,expected,compatibilityDate,bindingsOk,dateOk},null,2)+"\n");
 if(!bindingsOk) {
