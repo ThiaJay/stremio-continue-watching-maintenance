@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.8 — 2026-09-21
+
+- Adds bounded post-write readback retries after an acknowledged Stremio datastore write so short account-consistency delays do not cause a false repair failure.
+- Still requires the repaired item to read back with an exact zero `timeOffset` before any write is accepted as verified.
+- Keeps the existing encrypted pre-write backup, account fingerprint, before-write concurrency check, write caps and unrelated-state equality proof unchanged.
+- Classifies a persistent non-zero readback as unchanged, partially applied or concurrent drift so production failures remain diagnosable without weakening the safety gate.
+- Adds regressions proving delayed readback can succeed within the bounded window while a persistent unchanged readback still stops fail closed.
+
 ## 1.6.7 — 2026-09-21
 
 - Prevents an ancient-residual item from being planned twice when it is selected by both the bounded fast lane and the current ordinary rotating batch.
