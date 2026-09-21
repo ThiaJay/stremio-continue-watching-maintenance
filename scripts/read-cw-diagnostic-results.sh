@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-payload='{"sql":"SELECT item_hash,observed_at,payload FROM diagnostic_results_v1 WHERE item_hash IN (?,?,?) ORDER BY item_hash","params":["d50710896150aed6","5802dbc5fda6b745","c13774ae113c75c9"]}'
+payload='{"sql":"SELECT item_hash,observed_at,payload FROM diagnostic_results_v1 WHERE item_hash IN (?,?,?,?) ORDER BY item_hash","params":["d50710896150aed6","5802dbc5fda6b745","c13774ae113c75c9","d12921203e124b0e"]}'
 response="$(curl -fsS -X POST   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"   -H 'Content-Type: application/json'   --data "$payload"   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
 
 node - <<'NODE' "$response"
@@ -9,7 +9,7 @@ const fs=require("fs");
 const x=JSON.parse(process.argv[2]);
 if(!x.success)process.exit(2);
 const rows=x.result?.[0]?.results||[];
-const expected=["d50710896150aed6","5802dbc5fda6b745","c13774ae113c75c9"];
+const expected=["d50710896150aed6","5802dbc5fda6b745","c13774ae113c75c9","d12921203e124b0e"];
 const by=new Map(rows.map(r=>[String(r.item_hash||""),r]));
 for(const hash of expected){
   const row=by.get(hash);
