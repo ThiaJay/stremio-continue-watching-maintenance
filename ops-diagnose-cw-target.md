@@ -7,3 +7,5 @@ Recheck.
 Batch 3 recheck.
 
 Post batch 3 verification.
+
+Batch 3 settled recheck.
