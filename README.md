@@ -4,7 +4,7 @@ Automatic, cross-platform maintenance for a narrow Stremio account-state defect:
 
 ## What it does
 
-The scheduled Worker evaluates a bounded batch of movies and series with resume progress. For series it only acts when all currently released **normal-season** episodes are proven watched, the saved video is the final released normal episode and playback is not recent. A future-dated normal episode (including a TBC placeholder) does not count until its release date arrives.
+The scheduled Worker evaluates a bounded batch of movies and series with resume progress. For series it only acts when all currently released **normal-season** episodes are proven watched by Stremio's episode watched bitmap, the saved video is the final released normal episode and playback is not recent. It does not require the movie-only `flaggedWatched` field. A future-dated normal episode (including a TBC placeholder) does not count until its release date arrives.
 
 The normal completed-series path preserves the existing conservative 70% resume-position rule. A second, narrower path handles the Stremio fringe case where a fully watched final episode is left with a tiny residual pointer near the beginning: the pointer must be **15 seconds or less**, Stremio Core's per-video `timeWatched` must independently prove the native 70% watched threshold, the final episode must be flagged watched and every currently released normal episode must be watched. Anything beyond that tiny residual window is preserved as a possible intentional rewatch.
 
