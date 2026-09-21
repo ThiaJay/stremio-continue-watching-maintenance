@@ -176,7 +176,7 @@ jobs:
           state=failure
           stage=unknown
           if [ -f deployment-stage.txt ]; then
-            stage="$(tr -cd 'A-Za-z0-9_.-' < deployment-stage.txt | head -c 40)"
+            stage="$(tr -cd 'A-Za-z0-9_.-' < deployment-stage.txt | head -c 90)"
           fi
           context="aiostreams-maelstrom-deploy-failed-${stage}"
           description="Guarded adapter deployment failed at ${stage}"
