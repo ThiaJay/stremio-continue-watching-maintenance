@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-printf 'production_contract\n' > validation-stage.txt
+printf 'contract_fetch\n' > validation-stage.txt
 settings="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
+printf 'contract_compare\n' > validation-stage.txt
 node - <<'NODE' "$settings"
 const fs=require("fs");
 const x=JSON.parse(process.argv[2]);
