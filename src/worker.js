@@ -8,6 +8,7 @@ const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
 const RESIDUAL_POINTER_MAX_MS=15_000;
+const RESIDUAL_STALE_MS=24*60*60*1000;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
 const BULK_WATCHED_TRANSITION_WINDOW_MS=2*60*60*1000;
@@ -259,8 +260,13 @@ async function completionDecision(item,meta,now){
     return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-stale-progress"};
   }
   const timeWatchedRatio=Number(state.timeWatched)/Number(state.duration);
-  if(Number(state.timeOffset)<=RESIDUAL_POINTER_MAX_MS&&timeWatchedRatio>=WATCHED_THRESHOLD){
-    return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-residual-progress"};
+  if(Number(state.timeOffset)<=RESIDUAL_POINTER_MAX_MS){
+    if(timeWatchedRatio>=WATCHED_THRESHOLD){
+      return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-residual-progress"};
+    }
+    if(now-playbackActivityTime(item)>=RESIDUAL_STALE_MS){
+      return {id:item._id,before:structuredClone(item),reason:"fully-watched-final-released-episode-stale-residual-progress"};
+    }
   }
   return null;
 }
@@ -401,4 +407,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,selectExplicitTransitionItems,run,apply};
