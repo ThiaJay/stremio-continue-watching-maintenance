@@ -72,7 +72,7 @@ jobs:
                   print(f"context {name} {start+1}-{end}")
                   for n in range(start,end):
                       line=lines[n]
-                      line=re.sub(r'https?://[^\s"']+', '<url>', line)
-                      line=re.sub(r'(?i)(token|authkey|api[_-]?key)\s*[:=]\s*["'][^"']+["']', r'\1="<redacted>"', line)
+                      line=re.sub(r"https?://[^\\s\\\"']+", "<url>", line)
+                      line=re.sub(r"(?i)(token|authkey|api[_-]?key)\\s*[:=]\\s*[\\\"'][^\\\"']+[\\\"']", r'\\1="<redacted>"', line)
                       print(f"{n+1}: {line[:500]}")
           PY
