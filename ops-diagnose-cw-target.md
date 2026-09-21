@@ -13,3 +13,5 @@ Batch 3 settled recheck.
 Hashed identity diagnostic.
 
 v1.6.7 post deployment verification.
+
+v1.6.7 guarded write outcome diagnosis.
