@@ -5,3 +5,5 @@ Temporary trigger for the validated production adapter deployment.
 Retry with staged proof.
 
 Retry with Cloudflare rejection classification.
+
+Retry with sanitised Cloudflare validation detail.
