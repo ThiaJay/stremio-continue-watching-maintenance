@@ -7,7 +7,12 @@ for attempt in $(seq 1 30); do
   active_id="$(node -e 'const x=JSON.parse(process.argv[1]);const ds=x.result?.deployments||x.result||[];const d=Array.isArray(ds)?ds[0]:null;if(!x.success||!d)process.exit(2);process.stdout.write(String(d.id||""))' "$deployments")"
   case "$active_id" in
     "$EXPECTED_DEPLOYMENT_PREFIX"*) ;;
-    *) echo "::error::v1.6.6 is no longer the active deployment"; exit 2 ;;
+    *)
+      current_prefix="$(printf '%s' "$active_id" | tr -cd 'A-Za-z0-9' | head -c 12)"
+      printf 'deployment_mismatch_%s\n' "$current_prefix" > cw-v166-acceptance-stage.txt
+      echo "::error::v1.6.6 expected deployment prefix does not match current deployment"
+      exit 2
+      ;;
   esac
 
   printf "backup_query\n" > cw-v166-acceptance-stage.txt
