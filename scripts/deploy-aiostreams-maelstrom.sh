@@ -72,7 +72,7 @@ printf '%s' '{"main_module":"worker.js"}' > metadata.json
 http_code="$(curl -sS -o content-response.json -w '%{http_code}' -X PUT \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -F 'metadata=@metadata.json;type=application/json' \
-  -F 'worker.js=@patched-worker.mjs;type=application/javascript+module' \
+  -F 'worker.js=@patched-worker.mjs;filename=worker.js;type=application/javascript+module' \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content")"
 export CONTENT_HTTP_CODE="$http_code"
 node - <<'NODE'
