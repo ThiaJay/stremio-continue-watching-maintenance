@@ -1450,3 +1450,49 @@ jobs:
             --data @cw-v172-ni-status.json \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
 
+  publish_continue_watching_v172:
+    permissions:
+      contents: write
+      statuses: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Publish Continue Watching v1.7.2 release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Publish exact accepted v1.7.2 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-continue-watching-v1.7.2.sh
+      - name: Publish release status
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          state=failure
+          context="continue-watching-v172-release-failed"
+          description="Continue Watching v1.7.2 release publication failed"
+          if [ "$RELEASE_STATUS" = "success" ]; then
+            state=success
+            context="continue-watching-v172-release-published"
+            description="Continue Watching v1.7.2 immutable release published"
+          fi
+          python3 - <<PY
+          import json
+          open("cw-v172-release-status.json","w",encoding="utf-8").write(json.dumps({
+            "state":"$state",
+            "context":"$context",
+            "description":"$description"
+          }))
+          PY
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data @cw-v172-release-status.json \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+
