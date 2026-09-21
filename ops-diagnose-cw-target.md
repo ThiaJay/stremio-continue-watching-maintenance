@@ -21,3 +21,5 @@ Expose exact safe maintenance error code.
 Prioritise guarded write error.
 
 v1.6.8 post-cron verification.
+
+v1.7.0 Northern Ireland verification.
