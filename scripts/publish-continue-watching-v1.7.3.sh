@@ -50,7 +50,27 @@ const payload={ref:"refs/tags/"+process.env.RELEASE_TAG,sha:process.env.RELEASE_
 process.stdout.write(JSON.stringify(payload));
 NODE
   create_http="$(curl -sS -o create-tag-response.json -w '%{http_code}' -X POST "${auth[@]}" --data @create-tag.json "$api/git/refs")"
-  test "$create_http" = "201"
+  export CREATE_TAG_HTTP="$create_http"
+  node - <<'NODE'
+const fs=require("fs");
+const x=JSON.parse(fs.readFileSync("create-tag-response.json","utf8"));
+const http=String(process.env.CREATE_TAG_HTTP||"unknown");
+if(http!=="201"){
+  const raw=String(x.message||x.errors?.[0]?.message||"");
+  const safe=raw
+    .replace(/https?:\/\/\S+/gi,"URL")
+    .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
+    .replace(/[^A-Za-z0-9 ]/g," ")
+    .replace(/\s+/g," ")
+    .trim()
+    .split(" ")
+    .slice(0,12)
+    .join("")
+    .slice(0,72)||"nomessage";
+  fs.writeFileSync("release-stage.txt","tag_create_http"+http+"_"+safe+"\n");
+  process.exit(2);
+}
+NODE
   created_sha="$(node -e 'const x=require("./create-tag-response.json");process.stdout.write(String(x.object?.sha||""))')"
   test "$created_sha" = "$SOURCE_COMMIT"
 else
