@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-09-22",
+  "successor": {
+    "branch": "main",
+    "commit": "6419d3ac364780a9af8bc64b0fdbc8f6fd88fe8f",
+    "release": "v1.7.3",
+    "cleanupPullRequest": 20
+  },
+  "branches": [
+    {
+      "name": "fix/anchorless-series-skip",
+      "tip": "42e05222031f24fcb66c26726a6abc4cb934f1b6",
+      "reason": "Superseded by merged anchorless-series fail-closed handling and later accepted releases."
+    },
+    {
+      "name": "fix/continue-watching-backlog-fast-lane",
+      "tip": "4d7657d76083b0d80f8197f2fa9a6d0945134c34",
+      "reason": "Superseded by the merged explicit, ancient, near-zero and reported repair lanes in v1.7.3."
+    },
+    {
+      "name": "fix/metadata-identity-anchor",
+      "tip": "b2aef023cc56b58c34d1425a9f4444ea71b02c58",
+      "reason": "Superseded by merged metadata identity and watched-anchor proof now in the accepted production source."
+    },
+    {
+      "name": "fix/noncanonical-series-skip",
+      "tip": "db40ac3e674d1f053483ac161b2e9b46694c4e14",
+      "reason": "Superseded by merged non-canonical series fail-closed handling and legacy alias rules."
+    },
+    {
+      "name": "ops/aiostreams-maelstrom-validation",
+      "tip": "50cac34b1f6e36dec1209812d14fe4adfcebde80",
+      "reason": "Temporary validation branch superseded by the live accepted AIOStreams/Maelstrom adapter and Foundation evidence."
+    },
+    {
+      "name": "ops/deploy-v1.6.4",
+      "tip": "4868718b41e049bd59b80309b118811fff61a09c",
+      "reason": "Temporary v1.6.4 deployment and acceptance branch superseded by released v1.7.3."
+    },
+    {
+      "name": "ops/stream-compatibility-inspect",
+      "tip": "0313561619be4723cfd8684872221ffb232f8168",
+      "reason": "Temporary adapter inspection branch superseded by the accepted provider-identity and bingeGroup production deployment."
+    },
+    {
+      "name": "chore/consolidate-post-v1.7.3",
+      "tip": "307de46457ba6ed3e5188c41d654f8140d62f5b1",
+      "reason": "Older cleanup candidate superseded by PR 20 rebuilt on the final released main line."
+    }
+  ],
+  "preservation": "Each retired tip SHA is retained here before branch deletion. Product, validation and closure lineage remains in main, release v1.7.3 and the Foundation lifecycle authority."
+}
