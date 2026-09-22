@@ -1,0 +1,51 @@
+name: Verified seek to end diagnostic
+
+on:
+  push:
+    branches:
+      - ops/verified-seek-end-diagnostic-20260922
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+      SCRIPT_NAME: stremio-watch-state-maintenance
+      REPORTED_HASH_A: 690565fd71ed814a
+      REPORTED_HASH_B: 1cfd272f5e39bcee
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Set verified temporary targets
+        run: bash scripts/set-reported-repair-secret.sh
+      - name: Wait for fresh safe diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          started="$(date +%s%3N)"
+          for attempt in $(seq 1 45); do
+            body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT item_hash,observed_at,payload FROM diagnostic_results_v1 WHERE item_hash IN (?,?) AND observed_at >= ? ORDER BY item_hash",params:[process.env.REPORTED_HASH_A,process.env.REPORTED_HASH_B,Number(process.argv[1])]}))' "$started")"
+            response="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data "$body" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
+            printf '%s' "$response" > diagnostic-query.json
+            count="$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync("diagnostic-query.json","utf8"));if(!x.success)process.exit(2);process.stdout.write(String(x.result?.[0]?.results?.length||0))')"
+            if [ "$count" -ge 2 ]; then
+              node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync("diagnostic-query.json","utf8"));const rows=(x.result?.[0]?.results||[]).map(r=>({itemHash:r.item_hash,observedAt:r.observed_at,payload:JSON.parse(String(r.payload||"{}"))}));console.log("VERIFIED_DIAGNOSTIC="+JSON.stringify(rows))'
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::Fresh diagnostic snapshot was not observed"
+          exit 1
+      - name: Remove verified temporary targets
+        if: always()
+        run: bash scripts/remove-reported-repair-secret.sh
