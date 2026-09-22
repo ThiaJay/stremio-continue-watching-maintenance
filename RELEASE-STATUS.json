@@ -1,53 +1,78 @@
 {
   "product": "Continue Watching Maintenance for Stremio",
-  "version": "1.4.0",
-  "status": "ACTIVE_PUBLIC_HOSTED",
+  "version": "1.7.3",
+  "status": "LIVE_PRODUCTION_ACCEPTED_RELEASED",
   "classification": "hosted-maintenance",
+  "productSourceCommit": "94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495",
+  "finalProductionDeploymentPrefix": "ebb3a6b38626",
   "normalMode": "private scheduled maintenance",
   "publicProtocolSurface": "NONE",
   "cron": "*/10 * * * *",
   "batchSize": 8,
-  "maxWritesPerRun": 2,
-  "deterministicTests": {
-    "passed": 37,
-    "failed": 0
+  "maxNormalWritesPerRun": 2,
+  "maxExplicitIntentWritesPerRun": 6,
+  "crossPlatformCI": {
+    "passed": [
+      "linux",
+      "windows",
+      "macos"
+    ],
+    "run": 35667444749
   },
-  "hostedBackupExportVerified": true,
-  "guardedRestore": true,
-  "upstreamBug": "Stremio/stremio-bugs#2807",
-  "retirementTarget": "native Stremio Core fix",
-  "movieCreditsThreshold": 0.9,
-  "movieCompletionCleanup": true,
-  "legacyTmdbAliasCleanup": true,
-  "residualCompletedSeriesCleanup": true,
-  "residualPointerMaxMs": 15000,
-  "seriesWatchedThreshold": 0.7,
-  "playbackRecencyAuthority": "state.lastWatched with _mtime fallback",
-  "futureUnreleasedNormalEpisodesBlockCompletion": false,
-  "releasedUnwatchedNormalEpisodesBlockCompletion": true,
-  "seasonZeroAffectsNormalSeriesCompletion": false,
-  "deadCityAdversarialCases": 10,
-  "bulkWatchedTransitionCleanup": true,
-  "bulkWatchedTransitionWindowMs": 7200000,
-  "watchObservationPrivacy": "hashes and numeric timing/progress only; no titles/raw IDs/watched fields",
-  "footballersWivesExplicitIntentProof": {
-    "verified": true,
-    "watchedFieldUnchanged": true,
-    "unrelatedStateChanges": 0,
-    "encryptedHostedBackup": true
+  "productionAcceptance": {
+    "result": "accepted",
+    "proofCommit": "dbfadb76d8171f7f57e52208a39f5fd6ff780d14",
+    "acceptedExamples": 3,
+    "allOffsetsZero": true,
+    "encryptedBackupForEveryAcceptedExample": true,
+    "unrelatedStateProtectionVerified": true,
+    "temporaryReportedTargetSecret": "REMOVED",
+    "secretCleanupCommit": "bffbedd1276c769464afb23309e9c7ca3588887a",
+    "sourceAndCronPreservedAfterCleanup": true
   },
-  "deployedWorkerVersion": "b2103e77-0445-45ec-8b1b-1e00d24143d3",
-  "observationBaselineSeries": 42,
-  "explicitMovieWatchedTransitionCleanup": true,
-  "watchedResumeSemanticSplit": "watched=historical completion; timeOffset=current resume session",
-  "movieTransitionEvidence": "timesWatched +1 with unchanged timeOffset/timeWatched/duration/video/flaggedWatched; recent lastWatched required",
-  "observationSchema": "watch_observations_v2 privacy-safe hashed identity + numeric state only",
-  "charlieChocolateFactoryExplicitIntentProof": {
-    "verified": true,
-    "beforeOffset": 342284,
-    "afterOffset": 0,
-    "timesWatchedUnchangedByRepair": true,
-    "encryptedHostedBackup": true,
-    "unrelatedStateChanges": 0
+  "cleanupPolicies": {
+    "nearZeroResumeMaxMs": 1000,
+    "nearZeroQuietMs": 1800000,
+    "residualPointerMaxMs": 15000,
+    "residualStaleMs": 86400000,
+    "ancientResidualStaleMs": 2592000000,
+    "movieCreditsThreshold": 0.9,
+    "seriesWatchedThreshold": 0.7,
+    "legacyTmdbAliasCleanup": true,
+    "reportedIssuePriorityLane": true,
+    "reportedTargets": "private 16-character hashes with expiry",
+    "reportedLaneCannotBypassEligibility": true
+  },
+  "safety": {
+    "accountFingerprintBound": true,
+    "encryptedPreWriteBackup": true,
+    "backupEncryption": "AES-256-GCM",
+    "backupRetentionDays": 14,
+    "completeRecordConcurrencyCheck": true,
+    "boundedPostWriteReadback": true,
+    "exactZeroOffsetRequired": true,
+    "unrelatedStateEqualityRequired": true,
+    "failClosedOnAmbiguity": true,
+    "metadataIdentityPolicy": "canonical IMDb identity plus exact watched-anchor proof; AIOMetadata first, native Cinemeta fallback under the same proof",
+    "watchObservationPrivacy": "hashed identity and numeric timing/progress only; no titles, raw media IDs or watched bitfields"
+  },
+  "recovery": {
+    "hostedBackupExportVerified": true,
+    "guardedRestore": true
+  },
+  "githubRelease": {
+    "version": "v1.7.3",
+    "state": "LIVE",
+    "url": "https://github.com/ThiaJay/stremio-continue-watching-maintenance/releases/tag/v1.7.3",
+    "acceptedProductSourceCommit": "94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495",
+    "packagingCommit": "4ac8e993493a4602cfab09ca06bcda1c478fc46c",
+    "finalProductionDeploymentPrefix": "ebb3a6b38626",
+    "publishedAt": "2026-09-22T03:38:33Z"
+  },
+  "upstream": {
+    "bug": "Stremio/stremio-bugs#2807",
+    "nativeMarkWatched": "Stremio/stremio-core#1060 merged and released",
+    "nativeMarkSeasonWatched": "Stremio/stremio-core#1062 merged and released",
+    "retirementPolicy": "Retain guarded hosted maintenance until overlapping native behaviour is independently verified across live clients."
   }
 }

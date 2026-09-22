@@ -1,101 +1,128 @@
 # Continue Watching Maintenance for Stremio
 
-Automatic, cross-platform maintenance for a narrow Stremio account-state defect: completed series and movies can remain in **Continue Watching** because completed playback progress is still stored.
+Automatic cross-platform maintenance for stale Stremio account resume state.
 
-## What it does
+The production service is a private Cloudflare scheduled Worker. It runs every 10 minutes against the shared Stremio account state, so no client-specific process, browser extension or desktop daemon is required.
 
-The scheduled Worker evaluates a bounded batch of movies and series with resume progress. For series it only acts when all currently released **normal-season** episodes are proven watched by Stremio's episode watched bitmap, the saved video is the final released normal episode and playback is not recent. It does not require the movie-only `flaggedWatched` field. A future-dated normal episode (including a TBC placeholder) does not count until its release date arrives.
+## Current production state
 
-The normal completed-series path preserves the existing conservative 70% resume-position rule. A second, narrower path handles the Stremio fringe case where a fully watched final episode is left with a tiny residual pointer near the beginning: the pointer must be **15 seconds or less**, Stremio Core's per-video `timeWatched` must independently prove the native 70% watched threshold, the pointed final episode must be watched in the episode bitmap and every currently released normal episode must be watched. If Core watch time is below 70%, the same tiny pointer is only cleared after at least 24 hours without playback; recent tiny pointers remain possible intentional rewatches. Anything beyond that tiny residual window is preserved.
+Version 1.7.3 is production accepted from product source commit `94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495`.
 
-A separate transition-aware path handles explicit bulk watched intent. The Worker keeps only privacy-safe hashes and timing/progress snapshots for canonical series that currently have resume progress. If the watched bitfield changes from the previously observed state to a state where every released normal episode is watched, the playback pointer itself did not move during that watched-state change, the pointed episode is watched and playback was not recent, the stale `timeOffset` can be cleared even when it points to an older episode. This covers cases such as marking every season watched after an earlier rewatch without treating an already-watched rewatch as finished merely because its watched bits are still true. An initial observation is baseline-only and cannot trigger a correction.
+The final secret-free Worker deployment preserves the ten-minute cron and the existing bindings. Production acceptance proved three independently reported Continue Watching examples at an exact zero resume offset with an encrypted pre-write recovery record for each repair. The temporary target secret used during acceptance was removed afterwards.
 
-Movies use the same principle with a stricter action fingerprint. **Watched** means historical completion; **resume progress** means an unfinished current playback session. Explicitly choosing **Mark as watched** should therefore dismiss stale current progress at that moment, without pretending the playback position reached the credits. The hosted maintainer recognises that action only when `timesWatched` increments while `timeOffset`, `timeWatched`, duration, video identity and automatic watched-threshold state are unchanged. Natural playback, a later rewatch, historical/external sync or any progress drift is preserved. A later play can create a fresh Continue Watching position normally.
+The immutable GitHub release v1.7.3 is published. Its tag points to clean packaging commit `4ac8e993493a4602cfab09ca06bcda1c478fc46c`, after the release gate proved `src/worker.js` was byte-for-byte identical to accepted product source `94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495`.
 
-Playback recency is taken from `state.lastWatched` when it exists, because Stremio Core updates that field while playing. The LibraryItem `_mtime` is still used for concurrency protection, although unrelated account changes no longer make old playback look recent.
+## Repair model
 
-Season 0 is deliberately outside this maintainer's completion authority. Panels, Episode Insider/aftershow material, behind-the-scenes programmes and similar extras therefore cannot keep an otherwise completed normal series stuck in Continue Watching. Narrative-special classification remains owned by Story Order; this maintainer does not mark any Season 0 item watched or rewrite its identity.
+The maintainer clears only LibraryItem `state.timeOffset`. It never marks an episode or film watched or unwatched and never rewrites the series watched bitmap.
 
-For movies it follows Stremio Core's own completion rule: the item must be flagged watched, playback must be quiet and stored progress must be beyond the native 90% credits threshold.
+Several bounded lanes share the same safety model.
 
-When those conditions are met it clears **only** the LibraryItem `state.timeOffset`. It does not mark episodes watched or unwatched and it does not change the watched bitfield.
+### Explicit watched intent
 
-If a new normal-season episode becomes released later, that episode remains unwatched and the show can naturally return to Continue Watching.
+Recent series watched-bitfield transitions and explicit movie Mark as watched transitions are evaluated before ordinary maintenance. An initial observation is baseline only and cannot trigger a write.
 
-## Normal operating mode
+Series intent requires every currently released normal-season episode to be watched, the pointed episode to be watched and the playback pointer not to have moved during the watched-state transition.
 
-This is a **hosted-maintenance** component. Normal operation is automatic on a private Cloudflare scheduled Worker every 10 minutes. It has no public HTTP control surface and requires no PC, startup task or local daemon.
+Movie intent requires the manual watched fingerprint to be distinguishable from natural playback. In particular, `timesWatched` must increment while the saved playback offset, watch time, duration, video identity and automatic watched-threshold state remain unchanged.
 
-Explicit watched-state transitions have a separate bounded priority lane. Recent series or movie transitions detected by the privacy-safe observation state are evaluated before the rotating ordinary maintenance batch, oldest first. The priority lane evaluates at most 12 items and performs at most 6 verified writes per run, while ordinary cleanup retains its existing 2-write cap. This prevents a burst of Mark as Watched or Mark Season as Watched actions from ageing out of the two-hour evidence window merely because the corresponding item is not in that run's rotating batch.
+### Near-zero resume noise
 
-Series metadata is accepted only when it independently proves both the canonical IMDb identity and the exact episode anchor embedded in Stremio's watched bitfield. The configured AIOMetadata service binding remains the first source. If it cannot provide a trustworthy identity-and-anchor match, the Worker falls back to Stremio's native Cinemeta metadata and applies the same proof. A provider alias is accepted only when its explicit IMDb identity field matches the requested series and its video list contains the watched anchor. Ambiguous metadata still fails closed.
+A quiet positive resume pointer of one second or less can be treated as non-meaningful resume noise after the normal 30-minute playback quiet window.
 
-Non-canonical series LibraryItems are evaluated only by the dedicated safe alias-reconciliation path. If no canonical mapping can be proved, they are skipped without attempting canonical series metadata evaluation or recording a false metadata error.
+This rule does not infer that a title is watched. It preserves watched state, watch time, video identity and all unrelated fields.
 
-Series whose optional Stremio watched field is absent are also skipped before metadata evaluation. Without that watched anchor there is no episode-level evidence that all released episodes are watched, so the maintainer does not infer completion and does not treat the absence as a runtime failure.
+### Fully watched residual progress
 
-Each run is bounded:
-- privacy-safe watched-state observation across canonical series with positive resume progress; unchanged observations cause no D1 write and store no titles or raw media IDs;
-- deterministic metadata/evaluation batch of at most 8 eligible items;
-- maximum 2 account writes;
-- account fingerprint verification before evaluation and before mutation;
-- complete-record concurrency checks;
-- encrypted pre-write recovery record in private D1;
-- immediate post-write readback proving that only `timeOffset` plus Stremio's modification timestamp changed;
-- fail closed on ambiguity.
+For completed series the released normal-season watched bitmap is authoritative. The movie-only `flaggedWatched` field is not required.
 
-## What it is not
+A final released episode with meaningful completed progress can be cleared after the normal quiet guard.
 
-- **Stremio Watch State Reference** specifies watched/unwatched reconciliation and guarded bulk intent. It is deliberately on-demand and read-only.
-- **Continue Watching Maintenance** is automatic production maintenance for stale completed resume progress.
-- **Story Order** owns series episode/special ordering.
-- **Poster Safety** owns live metadata artwork policy.
-- **Library Artwork Repair** owns artwork already persisted in Stremio LibraryItems.
-- Stream/debrid readiness and player continuity are separate domains.
+A tiny pointer of 15 seconds or less has narrower rules. Core per-video watch time can independently prove native completion. Otherwise the residual must be stale for at least 24 hours.
 
-## Cross-platform model
+A tiny pointer on an older watched episode is preserved as a possible rewatch unless every released normal episode is watched, the pointed episode is watched, both saved offset and per-video watch time are no more than 15 seconds and playback has been inactive for at least 30 days.
 
-The authority is the shared Stremio account plus the hosted Worker. No client-specific process is required, so the correction applies regardless of whether the account is used from Windows, macOS, Linux, Android, Android TV, Fire TV or another Stremio client.
+Future unreleased normal episodes do not block completion. A released unwatched normal episode does.
 
-The metadata identity repair is also device independent. Identity proof, watched-anchor validation and native Cinemeta fallback all run inside the hosted Worker. No local executable, browser extension, desktop service, operating-system API or per-device configuration is part of the production path.
+Season 0 is outside this maintainer's completion authority.
 
-## Self-hosting
+### Legacy aliases
 
-1. Create a private D1 database and apply `schema.sql`.
-2. Copy `wrangler.example.toml` to an ignored local Wrangler config and insert the private D1 database ID.
-3. Configure the `METADATA` service binding to a trusted metadata service that returns exact series identity.
-4. Set Worker secrets:
-   - `STREMIO_AUTHKEY`
-   - `EXPECTED_ACCOUNT_FINGERPRINT`
-   - `BACKUP_ENCRYPTION_KEY` (32 random bytes encoded base64url)
-5. Run `npm test` and `npm run check`.
-6. Deploy only after the account fingerprint and recovery database are verified.
+A non-canonical `tmdb:` LibraryItem can be cleared only when it can be safely reconciled to an active canonical IMDb item with matching media type and normalised name under the dedicated alias rules.
 
-Production credentials, account identifiers, D1 IDs and private metadata routes must not be committed.
+### Reported issue priority
 
-## Recovery/admin
+A visibly wrong Continue Watching item can be represented privately by a short hash with an expiry.
 
-Normal operation remains automatic. Recovery is deliberately manual and guarded.
+Reported priority does not create a new repair rule. The item must independently pass the same near-zero, alias, explicit-intent or completion decision that would allow an ordinary repair.
 
-List encrypted hosted recovery records:
+Reported items may take priority for one of the existing two normal write slots. The normal two-write ceiling is not increased.
+
+The optional private target transport can come from D1 or an expiring Worker secret. Worker source contains no reported title or raw media identity.
+
+## Metadata proof
+
+Canonical series metadata is accepted only when it independently proves both the IMDb identity and the exact episode anchor embedded in Stremio's watched field.
+
+The configured metadata service binding is tried first. Native Cinemeta is the fail-closed fallback under the same identity and anchor proof.
+
+If no source can prove the mapping, no repair occurs.
+
+## Write safety
+
+Every account mutation requires all of the following.
+
+- The expected Stremio account fingerprint still matches
+- The complete current LibraryItem still matches the evaluated record
+- A second immediate pre-write read still matches
+- An encrypted pre-write recovery record is stored in private D1
+- The write is bounded by the relevant lane cap
+- Post-write readback reaches an exact zero `timeOffset` within a short bounded confirmation window
+- Every unrelated state field remains byte-for-byte equivalent after normalisation
+- Any ambiguity, concurrent drift or persistent readback mismatch fails closed
+
+Normal automatic cleanup performs at most two account writes per run. Explicit watched-intent handling has its own bounded cap of six verified writes.
+
+## Privacy
+
+Operational observation data stores only short hashes and numeric progress or timing evidence. It does not store titles, raw media IDs, watched bitfields or account credentials.
+
+Production credentials, account identifiers, private routes and Cloudflare resource IDs must never be committed.
+
+## Recovery
+
+Normal operation is automatic. Recovery is manual and guarded.
+
+List encrypted hosted backups.
 
 ```text
 npm run hosted-backups -- list
 ```
 
-Export and decrypt one into the ignored `.private/` folder:
+Export one recovery record into the ignored private folder.
 
 ```text
 npm run hosted-backups -- export <backup-key>
 ```
 
-Restore only after inspecting the exported record:
+Restore only after inspecting the exported record.
 
 ```text
 node scripts/restore.mjs .private/hosted-watch-backup-....json --ack-account-write --auth-stdin
 ```
 
-Restore verifies the expected Stremio account, requires the current LibraryItem to still match the cleanup candidate except for Stremio's modification timestamp, performs a second immediate pre-write read, restores the complete prior record and verifies the result by readback. It fails closed on any intervening change.
+Restore verifies the expected account, requires the current LibraryItem to still match the cleanup candidate except for the Stremio modification timestamp, performs a second immediate pre-write read, restores the complete prior record and verifies the result by readback.
+
+## Self-hosting
+
+1. Create a private D1 database and apply `schema.sql`
+2. Create an ignored local Wrangler configuration using `wrangler.example.toml`
+3. Configure the `METADATA` service binding
+4. Set `STREMIO_AUTHKEY`, `EXPECTED_ACCOUNT_FINGERPRINT` and `BACKUP_ENCRYPTION_KEY`
+5. Run `npm ci`, `npm test` and `npm run check`
+6. Deploy only after account identity, D1 recovery and metadata bindings are verified
+
+The reported-item target secret is optional and should be short-lived when used.
 
 ## Tests
 
@@ -103,6 +130,19 @@ Restore verifies the expected Stremio account, requires the current LibraryItem 
 npm ci
 npm test
 npm run check
+npm audit --audit-level=high
 ```
 
-The deterministic suite covers watched-bitfield decoding, completed-series qualification, future/TBC episodes, Season 0 ancillary material, residual-pointer cleanup, Stremio Core watch-time evidence, transition-aware bulk-watched intent, active-rewatch preservation, playback-recency semantics, privacy-safe observation state, legacy-ID aliases, bounded batches, write caps, exact-field mutation and closure of the public HTTP surface.
+CI runs the full suite on Linux, Windows and macOS.
+
+## Related Stremio work
+
+Stremio Watch State Reference specifies reusable watched-state transition invariants.
+
+Story Order owns episode and special display ordering.
+
+Library Artwork Repair owns artwork already persisted in Stremio LibraryItems.
+
+Poster Safety owns live metadata artwork policy.
+
+Stream and debrid readiness are separate from Continue Watching maintenance.
