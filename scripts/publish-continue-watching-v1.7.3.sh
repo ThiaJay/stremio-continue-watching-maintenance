@@ -37,54 +37,6 @@ test -s release-notes.md
 api="https://api.github.com/repos/$GITHUB_REPOSITORY"
 auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
 
-printf 'tag_check\n' > release-stage.txt
-tag_http="$(curl -sS -o tag-response.json -w '%{http_code}' "${auth[@]}" "$api/git/ref/tags/$TAG")"
-if [ "$tag_http" = "200" ]; then
-  existing_sha="$(node -e 'const x=require("./tag-response.json");process.stdout.write(String(x.object?.sha||""))')"
-  test "$existing_sha" = "$SOURCE_COMMIT"
-elif [ "$tag_http" = "404" ]; then
-  printf 'tag_create\n' > release-stage.txt
-  export RELEASE_SOURCE_COMMIT="$SOURCE_COMMIT" RELEASE_TAG="$TAG"
-  node - <<'NODE' > create-tag.json
-const payload={ref:"refs/tags/"+process.env.RELEASE_TAG,sha:process.env.RELEASE_SOURCE_COMMIT};
-process.stdout.write(JSON.stringify(payload));
-NODE
-  create_http="$(curl -sS -o create-tag-response.json -w '%{http_code}' -X POST "${auth[@]}" --data @create-tag.json "$api/git/refs")"
-  if [ "$create_http" = "201" ]; then
-    created_sha="$(node -e 'const x=require("./create-tag-response.json");process.stdout.write(String(x.object?.sha||""))')"
-    test "$created_sha" = "$SOURCE_COMMIT"
-  else
-    printf 'tag_git_push\n' > release-stage.txt
-    git tag "$TAG" "$SOURCE_COMMIT"
-    if ! git push origin "refs/tags/$TAG"; then
-      export CREATE_TAG_HTTP="$create_http"
-      node - <<'NODE'
-const fs=require("fs");
-const x=JSON.parse(fs.readFileSync("create-tag-response.json","utf8"));
-const http=String(process.env.CREATE_TAG_HTTP||"unknown");
-const raw=String(x.message||x.errors?.[0]?.message||"");
-const safe=raw
-  .replace(/https?:\/\/\S+/gi,"URL")
-  .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
-  .replace(/[^A-Za-z0-9 ]/g," ")
-  .replace(/\s+/g," ")
-  .trim()
-  .split(" ")
-  .slice(0,12)
-  .join("")
-  .slice(0,72)||"nomessage";
-fs.writeFileSync("release-stage.txt","tag_git_push_failed_rest"+http+"_"+safe+"\n");
-NODE
-      exit 2
-    fi
-    pushed_sha="$(git rev-parse "$TAG^{commit}")"
-    test "$pushed_sha" = "$SOURCE_COMMIT"
-  fi
-else
-  echo "::error::Unexpected tag lookup HTTP $tag_http"
-  exit 8
-fi
-
 printf 'release_check\n' > release-stage.txt
 release_http="$(curl -sS -o existing-release.json -w '%{http_code}' "${auth[@]}" "$api/releases/tags/$TAG")"
 if [ "$release_http" = "200" ]; then
@@ -103,6 +55,7 @@ const fs=require("fs");
 const body=fs.readFileSync("release-notes.md","utf8").trim();
 process.stdout.write(JSON.stringify({
   tag_name:process.env.RELEASE_TAG,
+  target_commitish:"94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495",
   name:"Continue Watching Maintenance "+process.env.RELEASE_TAG,
   body,
   draft:false,
@@ -111,7 +64,27 @@ process.stdout.write(JSON.stringify({
 }));
 NODE
 create_release_http="$(curl -sS -o create-release-response.json -w '%{http_code}' -X POST "${auth[@]}" --data @create-release.json "$api/releases")"
-test "$create_release_http" = "201"
+export CREATE_RELEASE_HTTP="$create_release_http"
+node - <<'NODE'
+const fs=require("fs");
+const x=JSON.parse(fs.readFileSync("create-release-response.json","utf8"));
+const http=String(process.env.CREATE_RELEASE_HTTP||"unknown");
+if(http!=="201"){
+  const raw=String(x.message||x.errors?.[0]?.message||"");
+  const safe=raw
+    .replace(/https?:\/\/\S+/gi,"URL")
+    .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
+    .replace(/[^A-Za-z0-9 ]/g," ")
+    .replace(/\s+/g," ")
+    .trim()
+    .split(" ")
+    .slice(0,12)
+    .join("")
+    .slice(0,72)||"nomessage";
+  fs.writeFileSync("release-stage.txt","release_create_http"+http+"_"+safe+"\n");
+  process.exit(2);
+}
+NODE
 created_tag="$(node -e 'const x=require("./create-release-response.json");process.stdout.write(String(x.tag_name||""))')"
 test "$created_tag" = "$TAG"
 printf 'passed\n' > release-stage.txt
