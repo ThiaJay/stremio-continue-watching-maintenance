@@ -9,3 +9,5 @@ Retry with tag rejection classification.
 Retry using authenticated Git tag push fallback.
 
 Retry with GitHub release creation owning tag creation.
+
+Retry from clean packaging commit with proven release token path.
