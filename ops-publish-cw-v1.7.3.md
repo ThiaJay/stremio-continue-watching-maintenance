@@ -7,3 +7,5 @@ Retry using direct GitHub API publication.
 Retry with tag rejection classification.
 
 Retry using authenticated Git tag push fallback.
+
+Retry with GitHub release creation owning tag creation.
