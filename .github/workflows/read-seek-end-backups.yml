@@ -1,0 +1,35 @@
+name: Read seek to end backups
+
+on:
+  push:
+    branches:
+      - ops/read-seek-end-backups-20260922
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+      HASH_DARYL: 690565fd71ed814a
+      HASH_ALVIN: 1cfd272f5e39bcee
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read backup metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT backup_key,created_at,expires_at,item_hash FROM watch_backups WHERE item_hash IN (?,?) ORDER BY created_at DESC LIMIT 50",params:[process.env.HASH_DARYL,process.env.HASH_ALVIN]}))')"
+          response="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data "$body" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID/query")"
+          printf '%s' "$response" > backups.json
+          node - <<'NODE'
+          const fs=require("fs");
+          const x=JSON.parse(fs.readFileSync("backups.json","utf8"));
+          if(!x.success) process.exit(2);
+          console.log("SAFE_BACKUPS="+JSON.stringify(x.result?.[0]?.results||[]));
+          NODE
