@@ -50,29 +50,36 @@ const payload={ref:"refs/tags/"+process.env.RELEASE_TAG,sha:process.env.RELEASE_
 process.stdout.write(JSON.stringify(payload));
 NODE
   create_http="$(curl -sS -o create-tag-response.json -w '%{http_code}' -X POST "${auth[@]}" --data @create-tag.json "$api/git/refs")"
-  export CREATE_TAG_HTTP="$create_http"
-  node - <<'NODE'
+  if [ "$create_http" = "201" ]; then
+    created_sha="$(node -e 'const x=require("./create-tag-response.json");process.stdout.write(String(x.object?.sha||""))')"
+    test "$created_sha" = "$SOURCE_COMMIT"
+  else
+    printf 'tag_git_push\n' > release-stage.txt
+    git tag "$TAG" "$SOURCE_COMMIT"
+    if ! git push origin "refs/tags/$TAG"; then
+      export CREATE_TAG_HTTP="$create_http"
+      node - <<'NODE'
 const fs=require("fs");
 const x=JSON.parse(fs.readFileSync("create-tag-response.json","utf8"));
 const http=String(process.env.CREATE_TAG_HTTP||"unknown");
-if(http!=="201"){
-  const raw=String(x.message||x.errors?.[0]?.message||"");
-  const safe=raw
-    .replace(/https?:\/\/\S+/gi,"URL")
-    .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
-    .replace(/[^A-Za-z0-9 ]/g," ")
-    .replace(/\s+/g," ")
-    .trim()
-    .split(" ")
-    .slice(0,12)
-    .join("")
-    .slice(0,72)||"nomessage";
-  fs.writeFileSync("release-stage.txt","tag_create_http"+http+"_"+safe+"\n");
-  process.exit(2);
-}
+const raw=String(x.message||x.errors?.[0]?.message||"");
+const safe=raw
+  .replace(/https?:\/\/\S+/gi,"URL")
+  .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
+  .replace(/[^A-Za-z0-9 ]/g," ")
+  .replace(/\s+/g," ")
+  .trim()
+  .split(" ")
+  .slice(0,12)
+  .join("")
+  .slice(0,72)||"nomessage";
+fs.writeFileSync("release-stage.txt","tag_git_push_failed_rest"+http+"_"+safe+"\n");
 NODE
-  created_sha="$(node -e 'const x=require("./create-tag-response.json");process.stdout.write(String(x.object?.sha||""))')"
-  test "$created_sha" = "$SOURCE_COMMIT"
+      exit 2
+    fi
+    pushed_sha="$(git rev-parse "$TAG^{commit}")"
+    test "$pushed_sha" = "$SOURCE_COMMIT"
+  fi
 else
   echo "::error::Unexpected tag lookup HTTP $tag_http"
   exit 8
