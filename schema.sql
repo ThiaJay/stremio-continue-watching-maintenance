@@ -55,3 +55,20 @@ CREATE TABLE IF NOT EXISTS watch_observations_v2 (
   prev_last_watched INTEGER NOT NULL,
   prev_mtime INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS diagnostic_results_v1 (
+  item_hash TEXT PRIMARY KEY,
+  observed_at INTEGER NOT NULL,
+  payload TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS repair_targets_v1 (
+  item_hash TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_repair_targets_v1_expires
+  ON repair_targets_v1(expires_at);
