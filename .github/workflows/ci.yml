@@ -1707,8 +1707,12 @@ jobs:
         run: |
           set -euo pipefail
           state=failure
-          context="continue-watching-v173-release-failed"
-          description="Continue Watching v1.7.3 release publication failed"
+          stage=unknown
+          if [ -f release-stage.txt ]; then
+            stage="$(tr -cd 'A-Za-z0-9_.-' < release-stage.txt | head -c 40)"
+          fi
+          context="continue-watching-v173-release-failed-${stage}"
+          description="Continue Watching v1.7.3 release publication failed at ${stage}"
           if [ "$RELEASE_STATUS" = "success" ]; then
             state=success
             context="continue-watching-v173-release-published"
