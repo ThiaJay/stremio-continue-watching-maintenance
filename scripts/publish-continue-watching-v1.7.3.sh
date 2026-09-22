@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_COMMIT="94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495"
-DEPLOYMENT_PREFIX="6bf183a720ec"
+DEPLOYMENT_PREFIX="ebb3a6b38626"
 VERSION="1.7.3"
 TAG="v1.7.3"
 
@@ -13,7 +13,7 @@ const x=JSON.parse(fs.readFileSync("release-acceptance-v1.7.3.json","utf8"));
 if(x.result!=="accepted") process.exit(2);
 if(x.version!=="1.7.3") process.exit(3);
 if(x.sourceCommit!=="94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495") process.exit(4);
-if(x.deploymentPrefix!=="6bf183a720ec") process.exit(5);
+if(x.deploymentPrefix!=="ebb3a6b38626") process.exit(5);
 for(const key of ["reportedTargetA","reportedTargetB","priorExample"]){
   const v=x[key]||{};
   if(Number(v.offset)!==0||Number(v.encryptedBackupCount)<1) process.exit(6);
