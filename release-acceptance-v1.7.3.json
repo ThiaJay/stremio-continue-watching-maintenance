@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "result": "accepted",
+  "version": "1.7.3",
+  "sourceCommit": "94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495",
+  "deploymentPrefix": "6bf183a720ec",
+  "crossPlatformCiRun": 35667444749,
+  "finalProofCommit": "dbfadb76d8171f7f57e52208a39f5fd6ff780d14",
+  "reportedTargetA": {
+    "offset": 0,
+    "encryptedBackupCount": 1
+  },
+  "reportedTargetB": {
+    "offset": 0,
+    "encryptedBackupCount": 1
+  },
+  "priorExample": {
+    "offset": 0,
+    "encryptedBackupCount": 1
+  },
+  "verifiedUnrelatedStateProtection": true,
+  "acceptedAt": "2026-09-22"
+}
