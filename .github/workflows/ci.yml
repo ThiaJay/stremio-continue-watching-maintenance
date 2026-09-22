@@ -1696,13 +1696,13 @@ jobs:
           fetch-depth: 0
       - name: Publish exact accepted v1.7.3 release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/publish-continue-watching-v1.7.3.sh
       - name: Publish release status
         if: always()
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_STATUS: ${{ job.status }}
         run: |
           set -euo pipefail
