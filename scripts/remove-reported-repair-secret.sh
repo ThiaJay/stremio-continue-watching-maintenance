@@ -50,7 +50,33 @@ schedules_before="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "
 node -e 'const x=JSON.parse(process.argv[1]);const s=x.result?.schedules||[];if(!x.success||!s.some(v=>v.cron==="*/10 * * * *"))process.exit(2)' "$schedules_before"
 
 printf 'secret_delete\n' > secret-cleanup-stage.txt
-npx wrangler secret delete REPORTED_REPAIR_TARGETS --name "$SCRIPT_NAME" --yes
+delete_http="$(curl -sS -o secret-delete-response.json -w '%{http_code}' -X DELETE \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/secrets/REPORTED_REPAIR_TARGETS")"
+export SECRET_DELETE_HTTP="$delete_http"
+node - <<'NODE'
+const fs=require("fs");
+const http=String(process.env.SECRET_DELETE_HTTP||"unknown");
+let x={};
+try{x=JSON.parse(fs.readFileSync("secret-delete-response.json","utf8"))}catch{}
+if(/^2\d\d$/.test(http)&&x.success!==false)process.exit(0);
+if(http==="404")process.exit(0);
+const e=x.errors?.[0]||{};
+const code=String(e.code??"unknown").replace(/[^A-Za-z0-9]/g,"").slice(0,24);
+const safe=String(e.message||x.message||"")
+  .replace(/https?:\/\/\S+/gi,"URL")
+  .replace(/[A-Fa-f0-9]{24,}/g,"HEX")
+  .replace(/[^A-Za-z0-9 ]/g," ")
+  .replace(/\s+/g," ")
+  .trim()
+  .split(" ")
+  .slice(0,10)
+  .join("")
+  .slice(0,64)||"nomessage";
+fs.writeFileSync("secret-cleanup-stage.txt","secret_delete_http"+http+"_code"+code+"_"+safe+"\n");
+process.exit(2);
+NODE
 
 printf 'verify_settings\n' > secret-cleanup-stage.txt
 settings_after="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
