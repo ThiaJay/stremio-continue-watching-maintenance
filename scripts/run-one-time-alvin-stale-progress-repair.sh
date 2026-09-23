@@ -75,17 +75,20 @@ delete_target() {
   node -e 'const x=JSON.parse(require("fs").readFileSync("/tmp/delete-target.json","utf8"));if(!x.success)process.exit(2)'
 }
 
+echo "stage=source_precheck"
 git cat-file -e "${PROD_SOURCE_COMMIT}^{commit}"
 git show "${PROD_SOURCE_COMMIT}:src/worker.js" > /tmp/prod-worker.js
 prod_hash="$(sha256sum /tmp/prod-worker.js | awk '{print $1}')"
 test "${#prod_hash}" -eq 64
 
+echo "stage=live_source_hash_before"
 live_before="$(fetch_live_source_hash)"
 if [ "$live_before" != "$prod_hash" ]; then
   echo "::error::Production Worker source has drifted from the accepted v1.7.3 source"
   exit 2
 fi
 
+echo "stage=settings_before"
 settings_before="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/settings")"
 node -e '
 const x=JSON.parse(process.argv[1]);
@@ -99,10 +102,12 @@ if(!bindings.some(v=>v.name==="EXPECTED_ACCOUNT_FINGERPRINT"&&v.type.includes("s
 process.stdout.write(JSON.stringify({bindings,compatibility_date:String(x.result?.compatibility_date||"")}));
 ' "$settings_before" > /tmp/settings-before-safe.json
 
+echo "stage=schedules_before"
 schedules_before="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/schedules")"
 node -e 'const x=JSON.parse(process.argv[1]);const s=x.result?.schedules||[];if(!x.success||!s.some(v=>v.cron==="*/10 * * * *"))process.exit(2)' "$schedules_before"
 
 existing_body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT item_hash,attempts,last_attempt,expires_at FROM repair_targets_v1 WHERE item_hash=?",params:[process.env.ALVIN_HASH]}))')"
+echo "stage=d1_existing_target"
 existing="$(d1_query "$existing_body")"
 node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);if((x.result?.[0]?.results||[]).length)process.exit(3)' "$existing"
 
@@ -140,6 +145,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "stage=deploy_temporary_worker"
 deploy_worker /tmp/repair-worker.js
 restore_required=1
 live_repair="$(fetch_live_source_hash)"
