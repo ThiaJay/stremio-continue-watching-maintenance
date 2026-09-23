@@ -73,3 +73,5 @@ jobs:
           import json
           print("LIVE_WORKER_SAFE="+json.dumps(safe,separators=(",",":")))
           PY
+          settings="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/settings")"
+          node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);const b=x.result?.bindings||[];console.log("LIVE_BINDINGS_SAFE="+JSON.stringify({hasReportedRepairTarget:b.some(v=>String(v.name||"")==="REPORTED_REPAIR_TARGETS"),bindingCount:b.length}))' "$settings"
