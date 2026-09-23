@@ -1,0 +1,75 @@
+name: Identify live Continue Watching Worker variant
+
+on:
+  push:
+    branches: [repair/alvin-stale-progress-20260923]
+    paths:
+      - .github/workflows/identify-live-worker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  SCRIPT_NAME: stremio-watch-state-maintenance
+  PROD_SOURCE_COMMIT: 94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495
+
+jobs:
+  identify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Identify live source without exposing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "${PROD_SOURCE_COMMIT}:src/worker.js" > /tmp/prod-worker.js
+          curl -fsS \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -D /tmp/live-headers.txt \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/content/v2" \
+            -o /tmp/live-content.bin
+          python3 - <<'PY'
+          from email.parser import BytesParser
+          from email.policy import default
+          from pathlib import Path
+          import hashlib,re
+
+          headers=Path("/tmp/live-headers.txt").read_bytes()
+          body=Path("/tmp/live-content.bin").read_bytes()
+          m=re.findall(br"(?im)^content-type:\s*([^\r\n]+)",headers)
+          ctype=m[-1].decode("latin1").strip() if m else ""
+          live=None
+          if ctype.lower().startswith("multipart/"):
+              synthetic=("Content-Type: "+ctype+"\r\nMIME-Version: 1.0\r\n\r\n").encode("latin1")+body
+              msg=BytesParser(policy=default).parsebytes(synthetic)
+              for p in msg.iter_parts():
+                  name=p.get_param("name",header="content-disposition") or p.get_filename() or ""
+                  if name=="worker.js":
+                      live=p.get_payload(decode=True) or b""
+                      break
+          else:
+              live=body
+          if live is None:
+              raise SystemExit("live source missing")
+          prod=Path("/tmp/prod-worker.js").read_bytes()
+          text=live.decode("utf8","replace")
+          safe={
+              "liveHashPrefix":hashlib.sha256(live).hexdigest()[:16],
+              "prodHashPrefix":hashlib.sha256(prod).hexdigest()[:16],
+              "sameAsAccepted":live==prod,
+              "length":len(live),
+              "hasOneTimeRepairFetch":"oneTimeRepairFetch" in text,
+              "hasOneTimeRepairToken":"ONE_TIME_REPAIR_TOKEN" in text,
+              "hasAlvinTemporaryRule":"oneTimeReportedWatchedMovieProgressDecision" in text,
+              "fetchAcceptsRequestEnv":"async fetch(request,env)" in text,
+              "hasDiagnosticTargets":"recordDiagnosticTargets" in text
+          }
+          import json
+          print("LIVE_WORKER_SAFE="+json.dumps(safe,separators=(",",":")))
+          PY
