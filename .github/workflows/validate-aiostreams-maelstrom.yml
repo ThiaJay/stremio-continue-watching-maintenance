@@ -1,4 +1,4 @@
-name: Inspect controller wrapper helpers
+name: Inspect controller exports
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ops/stream-compatibility-regression-20260923
-      - name: Extract controller helper logic safely
+      - name: Extract controller exports safely
         shell: bash
         run: |
           set -euo pipefail
@@ -44,21 +44,22 @@ jobs:
           else: found=body
           if found is None: raise SystemExit("module not found")
           lines=found.decode("utf-8","replace").splitlines()
+          start=max(1,len(lines)-70)
           out=[]
-          for n in range(1,min(200,len(lines)+1)):
+          for n in range(start,len(lines)+1):
               line=lines[n-1]
               line=re.sub(r'https?://[^"\'\s]+','URL',line)
               line=re.sub(r'[A-Za-z0-9_-]{40,}','LONG_VALUE',line)
               out.append(f"{n}: {line[:300]}")
           Path("ops-receipts").mkdir(exist_ok=True)
-          Path("ops-receipts/addon-binding-controller-helpers-20260923.txt").write_text("\n".join(out)+"\n")
+          Path("ops-receipts/addon-binding-controller-exports-20260923.txt").write_text("\n".join(out)+"\n")
           PY
-      - name: Commit sanitised helper receipt
+      - name: Commit sanitised export receipt
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ops-receipts/addon-binding-controller-helpers-20260923.txt
-          git commit -m "ops: inspect addon binding controller helpers"
+          git add ops-receipts/addon-binding-controller-exports-20260923.txt
+          git commit -m "ops: inspect addon binding controller exports"
           git push origin HEAD:ops/stream-compatibility-regression-20260923
