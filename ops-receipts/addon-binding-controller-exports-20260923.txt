@@ -1,0 +1,71 @@
+253:       }
+254:       for (const x of current) removeIndexes.add(x.index);
+255:       decisions.push({ provider, row, next: null, current: current[0] });
+256:     }
+257:   }
+258:   const fresh = await getCollection(env, false, deps.fetchImpl || fetch);
+259:   assert(await sha(fresh) === beforeHash, "COLLECTION_CHANGED_BEFORE_REBIND");
+260:   for (const d of decisions) {
+261:     if (d.next) await setBinding(env, d.provider, d.row, d.next.root, d.next.meta, when);
+262:     else await touchBinding(env, d.provider, when);
+263:   }
+264:   let duplicatesRemoved = 0;
+265:   if (removeIndexes.size) {
+266:     const next = before.filter((_, i) => !removeIndexes.has(i));
+267:     const expectedRemoved = before.length - next.length;
+268:     const prewrite = await getCollection(env, false, deps.fetchImpl || fetch);
+269:     assert(await sha(prewrite) === beforeHash, "COLLECTION_CHANGED_BEFORE_WRITE");
+270:     await backupCollection(env, before, when);
+271:     let setConfirmed = false, setError = null;
+272:     try {
+273:       const result = await stremio(env, "addonCollectionSet", { type: "AddonCollectionSet", addons: next }, deps.fetchImpl || fetch);
+274:       setConfirmed = result === true || result?.success === true;
+275:     } catch (e) {
+276:       setError = e;
+277:     }
+278:     const after = await getCollection(env, false, deps.fetchImpl || fetch), afterHash = await sha(after), nextHash = await sha(next);
+279:     if (afterHash === nextHash) {
+280:       duplicatesRemoved = expectedRemoved;
+281:       for (const def of Object.values(PROVIDERS)) assert(after.some((x) => x?.manifest?.id === def.wrapperId), "WRAPPER_REMOVED");
+282:     } else if (afterHash === beforeHash) {
+283:       errors.push("collection:" + (setError?.code || (!setConfirmed ? "COLLECTION_SET_NOT_CONFIRMED" : "LONG_VALUE")));
+284:     } else {
+285:       throw new BindError("COLLECTION_AMBIGUOUS_WRITE");
+286:     }
+287:   }
+288:   await writeControllerState(env, when, { candidatesSeen, rebinds, duplicatesRemoved, ambiguous, errors });
+289:   return { candidatesSeen, rebinds, duplicatesRemoved, ambiguous, errorCodes: [...new Set(errors)].slice(0, 20) };
+290: }
+291: __name(run, "run");
+292: var worker = {
+293:   async fetch() {
+294:     return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+295:   },
+296:   async scheduled(controller, env, ctx) {
+297:     const when = Number(controller?.scheduledTime || Date.now());
+298:     const task = run(env, when).then((s) => console.log(JSON.stringify({ event: "stremio-addon-binding-controller", ...s }))).catch(async (e) => {
+299:       const code = e?.code || "RUN_FAILED";
+300:       try {
+301:         await writeControllerState(env, when, { errors: [code] });
+302:       } catch {
+303:       }
+304:       console.log(JSON.stringify({ event: "stremio-addon-binding-controller", error: code }));
+305:       throw e;
+306:     });
+307:     ctx?.waitUntil ? ctx.waitUntil(task) : await task;
+308:   }
+309: };
+310: export {
+311:   BindError,
+312:   PROVIDERS,
+313:   backupCollection,
+314:   worker as default,
+315:   discover,
+316:   encryptBackup,
+317:   providerDescriptor,
+318:   rollbackBinding,
+319:   run,
+320:   safeTransportRoot,
+321:   validateRoot
+322: };
+323: //# sourceMappingURL=worker.js.map
