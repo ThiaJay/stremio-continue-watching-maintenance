@@ -216,6 +216,7 @@ async function bulkWatchedTransitionDecision(item,meta,observation,now){
   if(explicitTitleMark){
     return {id:item._id,before:structuredClone(item),reason:"explicit-series-mark-watched-stale-progress"};
   }
+  if(!meta)return null;
 
   if(Number(observation.last_watched)>0&&Number(observation.changed_at)-Number(observation.last_watched)<QUIET_MS)return null;
   const videos=orderedVideos(meta);assert(videos.length>0,"EPISODE_LIST_EMPTY");
