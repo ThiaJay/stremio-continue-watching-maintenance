@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
-globalThis.crypto = globalThis.crypto || crypto.webcrypto;
-
 const mod = await import("../patched-controller.mjs");
 
 const descriptor = {
