@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "tables": [
+    {
+      "name": "_cf_KV",
+      "sql": "CREATE TABLE _cf_KV (\n        key TEXT PRIMARY KEY,\n        value BLOB\n      ) WITHOUT ROWID"
+    },
+    {
+      "name": "binding_events",
+      "sql": "CREATE TABLE binding_events (event_id TEXT PRIMARY KEY, provider TEXT NOT NULL, event_type TEXT NOT NULL, old_root TEXT, new_root TEXT, at INTEGER NOT NULL, details TEXT NOT NULL)"
+    },
+    {
+      "name": "collection_backups",
+      "sql": "CREATE TABLE collection_backups (backup_key TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, payload TEXT NOT NULL)"
+    },
+    {
+      "name": "controller_state",
+      "sql": "CREATE TABLE controller_state (state_key TEXT PRIMARY KEY, last_run INTEGER NOT NULL, candidates_seen INTEGER NOT NULL, rebinds INTEGER NOT NULL, duplicates_removed INTEGER NOT NULL, ambiguous INTEGER NOT NULL, errors TEXT NOT NULL)"
+    },
+    {
+      "name": "provider_bindings",
+      "sql": "CREATE TABLE provider_bindings (provider TEXT PRIMARY KEY, current_root TEXT NOT NULL, previous_root TEXT, expected_host TEXT NOT NULL, expected_manifest_id TEXT, expected_manifest_name TEXT, current_version TEXT, updated_at INTEGER NOT NULL, last_validated_at INTEGER NOT NULL)"
+    }
+  ]
+}
