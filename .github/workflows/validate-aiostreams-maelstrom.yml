@@ -1,4 +1,4 @@
-name: Inspect stream compatibility binding schema
+name: Inspect stream compatibility binding values
 
 on:
   push:
@@ -20,29 +20,37 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ops/stream-compatibility-regression-20260923
-      - name: Inspect D1 schema safely
+      - name: Inspect provider binding metadata safely
         shell: bash
         run: |
           set -euo pipefail
           settings="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
           dbid="$(node -e 'const x=JSON.parse(process.argv[1]); const b=(x.result?.bindings||[]).find(v=>v.name==="BINDINGS_DB"); if(!b)process.exit(2); process.stdout.write(String(b.id||b.database_id||""));' "$settings")"
           test -n "$dbid"
-          response="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data '{"sql":"SELECT name, sql FROM sqlite_master WHERE type=\u0027table\u0027 ORDER BY name"}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$dbid/query")"
+          response="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data '{"sql":"SELECT provider,current_root,expected_host,expected_manifest_id,expected_manifest_name,current_version,updated_at,last_validated_at FROM provider_bindings ORDER BY provider"}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$dbid/query")"
           node - <<'NODE' "$response"
-          const fs=require("fs");
+          const fs=require("fs"), crypto=require("crypto");
           const x=JSON.parse(process.argv[2]);
           if(!x.success) process.exit(3);
-          const rows=(x.result||[]).flatMap(r=>r.results||[]);
-          const safe=rows.map(r=>({name:String(r.name||""),sql:String(r.sql||"")}));
+          const rows=(x.result||[]).flatMap(r=>r.results||[]).map(r=>({
+            provider:String(r.provider||""),
+            currentRootSha256:crypto.createHash("sha256").update(String(r.current_root||"")).digest("hex"),
+            expectedHost:String(r.expected_host||""),
+            expectedManifestId:String(r.expected_manifest_id||""),
+            expectedManifestName:String(r.expected_manifest_name||""),
+            currentVersion:String(r.current_version||""),
+            updatedAt:Number(r.updated_at||0),
+            lastValidatedAt:Number(r.last_validated_at||0)
+          }));
           fs.mkdirSync("ops-receipts",{recursive:true});
-          fs.writeFileSync("ops-receipts/stream-binding-schema-20260923.json",JSON.stringify({schema:1,tables:safe},null,2)+"\n");
+          fs.writeFileSync("ops-receipts/stream-binding-values-20260923.json",JSON.stringify({schema:1,rows},null,2)+"\n");
           NODE
-      - name: Commit sanitised schema receipt
+      - name: Commit sanitised binding receipt
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ops-receipts/stream-binding-schema-20260923.json
-          git commit -m "ops: record stream binding schema"
+          git add ops-receipts/stream-binding-values-20260923.json
+          git commit -m "ops: record stream binding metadata"
           git push origin HEAD:ops/stream-compatibility-regression-20260923
