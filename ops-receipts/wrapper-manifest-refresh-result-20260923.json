@@ -2,12 +2,12 @@
   "schema": 1,
   "state": {
     "state_key": "latest",
-    "last_run": 1790198435000,
+    "last_run": 1790198555000,
     "candidates_seen": 0,
     "rebinds": 0,
     "duplicates_removed": 0,
     "ambiguous": 0,
-    "errors": "[]"
+    "errors": "[\"WRAPPER_HTTP_404\"]"
   },
   "events": []
 }
