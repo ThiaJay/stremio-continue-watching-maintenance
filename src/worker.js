@@ -189,7 +189,8 @@ async function observeWatchedChanges(env,items,when){
       const vals=[snap.item_hash,snap.media_type,snap.marker_hash,0,snap.time_offset,snap.time_watched,snap.times_watched,snap.flagged_watched,snap.duration,snap.video_hash,snap.last_watched,snap.mtime,snap.prev_time_offset,snap.prev_time_watched,snap.prev_times_watched,snap.prev_flagged_watched,snap.prev_duration,snap.prev_video_hash,snap.prev_last_watched,snap.prev_mtime];
       await env.BACKUP_DB.prepare("INSERT INTO watch_observations_v2 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(...vals).run();current.set(itemHash,snap);continue;
     }
-    if(previous.marker_hash!==markerHash){
+    const titleWatchedChanged=item.type==="series"&&Number(previous.times_watched)!==Number(snap.times_watched);
+    if(previous.marker_hash!==markerHash||titleWatchedChanged){
       Object.assign(snap,{changed_at:when,prev_time_offset:Number(previous.time_offset)||0,prev_time_watched:Number(previous.time_watched)||0,prev_times_watched:Number(previous.times_watched)||0,prev_flagged_watched:Number(previous.flagged_watched)||0,prev_duration:Number(previous.duration)||0,prev_video_hash:String(previous.video_hash||""),prev_last_watched:Number(previous.last_watched)||0,prev_mtime:Number(previous.mtime)||0});
       await env.BACKUP_DB.prepare("UPDATE watch_observations_v2 SET media_type=?,marker_hash=?,changed_at=?,time_offset=?,time_watched=?,times_watched=?,flagged_watched=?,duration=?,video_hash=?,last_watched=?,mtime=?,prev_time_offset=?,prev_time_watched=?,prev_times_watched=?,prev_flagged_watched=?,prev_duration=?,prev_video_hash=?,prev_last_watched=?,prev_mtime=? WHERE item_hash=?").bind(snap.media_type,snap.marker_hash,snap.changed_at,snap.time_offset,snap.time_watched,snap.times_watched,snap.flagged_watched,snap.duration,snap.video_hash,snap.last_watched,snap.mtime,snap.prev_time_offset,snap.prev_time_watched,snap.prev_times_watched,snap.prev_flagged_watched,snap.prev_duration,snap.prev_video_hash,snap.prev_last_watched,snap.prev_mtime,itemHash).run();current.set(itemHash,snap);
     }
@@ -201,6 +202,21 @@ async function bulkWatchedTransitionDecision(item,meta,observation,now){
   if(!item||item.type!=="series"||!/^tt\d{5,12}$/.test(String(item._id||""))||!(Number(item.state?.timeOffset)>0))return null;
   if(now-playbackActivityTime(item)<QUIET_MS)return null;
   if(await watchedHash(item)!==observation.marker_hash||await videoHash(item)!==observation.video_hash||Number(item.state?.timeOffset)!==Number(observation.time_offset))return null;
+
+  const explicitTitleMark=
+    Number(observation.times_watched)===Number(observation.prev_times_watched)+1 &&
+    Number(observation.times_watched)>=1 &&
+    Number(observation.time_offset)===Number(observation.prev_time_offset) &&
+    Number(observation.time_watched)===Number(observation.prev_time_watched) &&
+    Number(observation.duration)===Number(observation.prev_duration) &&
+    Number(observation.flagged_watched)===Number(observation.prev_flagged_watched) &&
+    String(observation.video_hash)===String(observation.prev_video_hash) &&
+    Number(item.state?.timeWatched)===Number(observation.time_watched) &&
+    Math.abs(Number(observation.changed_at)-Number(observation.last_watched))<=15*60*1000;
+  if(explicitTitleMark){
+    return {id:item._id,before:structuredClone(item),reason:"explicit-series-mark-watched-stale-progress"};
+  }
+
   if(Number(observation.last_watched)>0&&Number(observation.changed_at)-Number(observation.last_watched)<QUIET_MS)return null;
   const videos=orderedVideos(meta);assert(videos.length>0,"EPISODE_LIST_EMPTY");
   const ids=videos.map(v=>String(v.id));assert(new Set(ids).size===ids.length,"DUPLICATE_VIDEO_ID");
@@ -580,11 +596,17 @@ async function run(env,scheduledTime=Date.now(),deps={}){
   const fastPlanIds=new Set();
   for(const {item,observation} of explicitQueue){
     try{
-      if(item.type==="series"&&!watchedAnchor(item?.state?.watched))continue;
-      const meta=item.type==="series"?await metadata(env,item,deps):null;
-      const transition=item.type==="series"
-        ?await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime)
-        :await movieMarkedWatchedTransitionDecision(item,observation,scheduledTime);
+      let transition=null;
+      if(item.type==="series"){
+        transition=await bulkWatchedTransitionDecision(item,null,observation,scheduledTime);
+        if(!transition){
+          if(!watchedAnchor(item?.state?.watched))continue;
+          const meta=await metadata(env,item,deps);
+          transition=await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime);
+        }
+      }else{
+        transition=await movieMarkedWatchedTransitionDecision(item,observation,scheduledTime);
+      }
       if(transition){transition.beforeHash=await hash(item);fastPlans.push(transition);fastPlanIds.add(item._id);}
     }catch(e){errors.push(e?.code||"EXPLICIT_EVALUATION_FAILED");}
   }
@@ -642,9 +664,13 @@ async function run(env,scheduledTime=Date.now(),deps={}){
       const alias=legacyAliasDecision(item,byId,scheduledTime);
       if(alias){alias.beforeHash=await hash(item);plans.push(alias);continue;}
       if(item.type==="series"&&!/^tt\d{5,12}$/.test(String(item._id||"")))continue;
-      if(item.type==="series"&&!watchedAnchor(item?.state?.watched))continue;
-      const meta=item.type==="series"?await metadata(env,item,deps):null,observation=observations.get(await observationKey(item));
+      const observation=observations.get(await observationKey(item));
+      let meta=null;
       if(item.type==="series"){
+        const explicitTitleTransition=await bulkWatchedTransitionDecision(item,null,observation,scheduledTime);
+        if(explicitTitleTransition){explicitTitleTransition.beforeHash=await hash(item);plans.push(explicitTitleTransition);continue;}
+        if(!watchedAnchor(item?.state?.watched))continue;
+        meta=await metadata(env,item,deps);
         const transition=await bulkWatchedTransitionDecision(item,meta,observation,scheduledTime);
         if(transition){transition.beforeHash=await hash(item);plans.push(transition);continue;}
       }else if(item.type==="movie"){

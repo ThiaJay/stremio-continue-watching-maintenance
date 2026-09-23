@@ -94,6 +94,71 @@ test("Once Upon a Time in Northern Ireland clears after all five episodes are wa
   assert.equal(d?.reason,"fully-watched-final-released-episode-stale-progress");
 });
 
+test("explicit series title mark watched clears unchanged stale resume without requiring a bitmap transition",async()=>{
+  const item=await libraryItem({offset:45_000,duration:3_600_000,mtime:NOW-QUIET_MS-1_000});
+  item.state.timesWatched=4;
+  item.state.lastWatched=new Date(NOW-QUIET_MS-1_000).toISOString();
+  const observation={
+    marker_hash:await watchedHash(item),
+    video_hash:await videoHash(item),
+    changed_at:NOW-QUIET_MS-1_000,
+    time_offset:item.state.timeOffset,
+    time_watched:item.state.timeWatched,
+    times_watched:4,
+    flagged_watched:item.state.flaggedWatched,
+    duration:item.state.duration,
+    last_watched:Date.parse(item.state.lastWatched),
+    prev_time_offset:item.state.timeOffset,
+    prev_time_watched:item.state.timeWatched,
+    prev_times_watched:3,
+    prev_flagged_watched:item.state.flaggedWatched,
+    prev_duration:item.state.duration,
+    prev_video_hash:await videoHash(item)
+  };
+  const d=await bulkWatchedTransitionDecision(item,null,observation,NOW);
+  assert.equal(d?.reason,"explicit-series-mark-watched-stale-progress");
+});
+
+test("series title watched counter transition is observed even when episode bitmap is unchanged",async()=>{
+  const item=await libraryItem();
+  const current={
+    item_hash:await observationKey(item),
+    media_type:"series",
+    marker_hash:await watchedHash(item),
+    changed_at:0,
+    time_offset:item.state.timeOffset,
+    time_watched:item.state.timeWatched,
+    times_watched:item.state.timesWatched-1,
+    flagged_watched:item.state.flaggedWatched,
+    duration:item.state.duration,
+    video_hash:await videoHash(item),
+    last_watched:Date.parse(item.state.lastWatched),
+    mtime:Date.parse(item._mtime),
+    prev_time_offset:item.state.timeOffset,
+    prev_time_watched:item.state.timeWatched,
+    prev_times_watched:item.state.timesWatched-1,
+    prev_flagged_watched:item.state.flaggedWatched,
+    prev_duration:item.state.duration,
+    prev_video_hash:await videoHash(item),
+    prev_last_watched:Date.parse(item.state.lastWatched),
+    prev_mtime:Date.parse(item._mtime)
+  };
+  const db={
+    prepare(sql){
+      return {
+        bind(){return this;},
+        async all(){
+          if(sql.startsWith("SELECT * FROM watch_observations_v2"))return {results:[current]};
+          return {results:[]};
+        },
+        async run(){return {success:true};}
+      };
+    }
+  };
+  const observed=await observeWatchedChanges({BACKUP_DB:db},[item],NOW);
+  assert.equal(observed.get(current.item_hash)?.changed_at,NOW);
+});
+
 test("series completion does not depend on flaggedWatched because Core uses the episode bitmap",async()=>{
   const item=await libraryItem({flagged:0});
   const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
