@@ -24,3 +24,28 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm audit --audit-level=high
+
+
+  deploy_continue_watching_hotfix_20260924:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Deploy Continue Watching hotfix 2026-09-24 safely'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SCRIPT_NAME: stremio-watch-state-maintenance
+      EXPECTED_SOURCE_COMMIT: 9ed1a5b9362eb532211cf3827d300ed51bb023e8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify deployment credentials are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Deploy exact validated hotfix source
+        shell: bash
+        run: bash scripts/deploy-continue-watching-hotfix-20260924.sh
