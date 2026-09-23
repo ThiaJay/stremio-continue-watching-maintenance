@@ -1,0 +1,6 @@
+stream_compatibility_live_regression_inspection
+state=livenew_g0_u1_a1_p1_f1_id1_ua1_h72edeaa6cbe5618d
+source_sha256=72edeaa6cbe5618dbc507ffd4fc3b9324b2a16af2020229116762eceaf48862a
+literal_misspelling_present=False
+literal_correct_generic_present=False
+deployment_id=1d2eb4ab-f1fa-41cc-9cf9-b0c83843315f
