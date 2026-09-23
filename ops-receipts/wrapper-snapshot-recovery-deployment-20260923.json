@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "result": "deployed",
+  "sourceSha256": "4672fb56967dc47dad0351fcdb17261702f39d49c08207650427ee77e97951bb",
+  "settingsPreserved": true,
+  "recovery": "stale generic stream wrapper snapshot only, verified Maelstrom binding 2.34.1 to adapter.8, transport URL unchanged"
+}
