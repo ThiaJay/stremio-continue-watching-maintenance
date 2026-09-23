@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "result": "deployed",
+  "sourceSha256": "729ff9a59f1833a2ea8491f83b4795102607894d362bd48dfc0f5eb70015b5bc",
+  "settingsPreserved": true,
+  "policy": "wrapper refresh failures are provider scoped, logged without private path, and do not stop unrelated maintenance"
+}
