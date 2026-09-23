@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "result": "passed",
+  "state": {
+    "state_key": "latest",
+    "last_run": 1790199035000,
+    "candidates_seen": 0,
+    "rebinds": 0,
+    "duplicates_removed": 0,
+    "ambiguous": 0,
+    "errors": "[\"aiometadata:WRAPPER_HTTP_404\",\"maelstrom:WRAPPER_MANIFEST_SNAPSHOT_RECOVERED\"]"
+  },
+  "repairEvent": {
+    "provider": "maelstrom",
+    "eventType": "wrapper_manifest_refresh",
+    "at": 1790199035000,
+    "details": {
+      "provider": "maelstrom",
+      "fromName": "Stream Compatibility",
+      "fromVersion": "2.34.1-compat.7",
+      "toName": "Maelstrom",
+      "toVersion": "2.34.1-adapter.8",
+      "recovery": "verified_binding_snapshot"
+    }
+  },
+  "latestBackup": {
+    "createdAt": 1790199035000,
+    "expiresAt": 1791408635000
+  }
+}
