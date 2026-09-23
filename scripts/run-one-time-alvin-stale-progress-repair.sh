@@ -68,11 +68,14 @@ d1_query() {
     "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${CLOUDFLARE_D1_DATABASE_ID}/query"
 }
 
-delete_target() {
-  local body
-  body="$(node -e 'process.stdout.write(JSON.stringify({sql:"DELETE FROM repair_targets_v1 WHERE item_hash=?",params:[process.env.ALVIN_HASH]}))')"
-  d1_query "$body" >/tmp/delete-target.json || return 1
-  node -e 'const x=JSON.parse(require("fs").readFileSync("/tmp/delete-target.json","utf8"));if(!x.success)process.exit(2)'
+delete_repair_secret_best_effort() {
+  local code
+  code="$(curl -sS -o /tmp/secret-delete.json -w '%{http_code}' -X DELETE \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Accept: application/json" \
+    "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/secrets/REPORTED_REPAIR_TARGETS")"
+  if [[ "$code" =~ ^2[0-9][0-9]$ || "$code" = "404" ]]; then return 0; fi
+  return 1
 }
 
 echo "stage=source_precheck"
@@ -94,6 +97,7 @@ node -e '
 const x=JSON.parse(process.argv[1]);
 if(!x.success)process.exit(2);
 const bindings=(x.result?.bindings||[]).map(v=>({name:String(v.name||""),type:String(v.type||"")})).sort((a,b)=>a.name.localeCompare(b.name));
+if(bindings.some(v=>v.name==="REPORTED_REPAIR_TARGETS"))process.exit(8);
 if(!bindings.some(v=>(v.type==="d1"||v.type==="d1_database")&&v.name==="BACKUP_DB"))process.exit(3);
 if(!bindings.some(v=>v.name==="METADATA"))process.exit(4);
 if(!bindings.some(v=>v.name==="STREMIO_AUTHKEY"&&v.type.includes("secret")))process.exit(5);
@@ -105,11 +109,6 @@ process.stdout.write(JSON.stringify({bindings,compatibility_date:String(x.result
 echo "stage=schedules_before"
 schedules_before="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/schedules")"
 node -e 'const x=JSON.parse(process.argv[1]);const s=x.result?.schedules||[];if(!x.success||!s.some(v=>v.cron==="*/10 * * * *"))process.exit(2)' "$schedules_before"
-
-existing_body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT item_hash,attempts,last_attempt,expires_at FROM repair_targets_v1 WHERE item_hash=?",params:[process.env.ALVIN_HASH]}))')"
-echo "stage=d1_existing_target"
-existing="$(d1_query "$existing_body")"
-node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);if((x.result?.[0]?.results||[]).length)process.exit(3)' "$existing"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -131,12 +130,12 @@ node --check /tmp/repair-worker.js
 repair_hash="$(sha256sum /tmp/repair-worker.js | awk '{print $1}')"
 
 restore_required=0
-target_inserted=0
+secret_maybe_present=0
 cleanup() {
   local rc=$?
   set +e
-  if [ "$target_inserted" = "1" ]; then
-    delete_target
+  if [ "$secret_maybe_present" = "1" ]; then
+    delete_repair_secret_best_effort
   fi
   if [ "$restore_required" = "1" ]; then
     deploy_worker /tmp/prod-worker.js
@@ -164,44 +163,38 @@ if(JSON.stringify(before)!==JSON.stringify(safe))process.exit(3);
 schedules_repair="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/schedules")"
 node -e 'const x=JSON.parse(process.argv[1]);const s=x.result?.schedules||[];if(!x.success||!s.some(v=>v.cron==="*/10 * * * *"))process.exit(2)' "$schedules_repair"
 
-started="$(date +%s%3N)"
-expires="$(( started + 30*60*1000 ))"
-insert_body="$(STARTED="$started" EXPIRES="$expires" node -e 'process.stdout.write(JSON.stringify({sql:"INSERT INTO repair_targets_v1 (item_hash,created_at,expires_at,attempts,last_attempt) VALUES (?,?,?,0,0)",params:[process.env.ALVIN_HASH,Number(process.env.STARTED),Number(process.env.EXPIRES)]}))')"
-insert_response="$(d1_query "$insert_body")"
-node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2)' "$insert_response"
-target_inserted=1
+export REPORTED_HASH_A="$ALVIN_HASH"
+export REPORTED_HASH_B="$ALVIN_HASH"
+echo "stage=set_reported_target"
+secret_maybe_present=1
+bash scripts/set-reported-repair-secret.sh
 
+started="$(date +%s%3N)"
 echo "alvin_repair_target_armed"
 
 success=0
 for attempt in $(seq 1 52); do
-  check_body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT item_hash,attempts,last_attempt FROM repair_targets_v1 WHERE item_hash=?",params:[process.env.ALVIN_HASH]}))')"
-  check="$(d1_query "$check_body")"
-  count="$(node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);process.stdout.write(String((x.result?.[0]?.results||[]).length))' "$check")"
-  if [ "$count" = "0" ]; then
-    backup_body="$(STARTED="$started" node -e 'process.stdout.write(JSON.stringify({sql:"SELECT backup_key,created_at,item_hash FROM watch_backups WHERE item_hash=? AND created_at>=? ORDER BY created_at DESC LIMIT 5",params:[process.env.ALVIN_HASH,Number(process.env.STARTED)]}))')"
-    backups="$(d1_query "$backup_body")"
-    backup_count="$(node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);process.stdout.write(String((x.result?.[0]?.results||[]).length))' "$backups")"
-    if [ "$backup_count" -ge 1 ]; then
-      success=1
-      echo "alvin_progress_repair_verified backup_count=${backup_count}"
-      break
-    fi
-    echo "::error::Repair target cleared without a new encrypted backup"
-    exit 8
+  backup_body="$(STARTED="$started" node -e 'process.stdout.write(JSON.stringify({sql:"SELECT backup_key,created_at,item_hash FROM watch_backups WHERE item_hash=? AND created_at>=? ORDER BY created_at DESC LIMIT 5",params:[process.env.ALVIN_HASH,Number(process.env.STARTED)]}))')"
+  backups="$(d1_query "$backup_body")"
+  backup_count="$(node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);process.stdout.write(String((x.result?.[0]?.results||[]).length))' "$backups")"
+  if [ "$backup_count" -ge 1 ]; then
+    success=1
+    echo "alvin_progress_repair_verified backup_count=${backup_count}"
+    break
   fi
   sleep 15
 done
 
 if [ "$success" != "1" ]; then
-  state_body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT attempts,last_attempt FROM repair_targets_v1 WHERE item_hash=?",params:[process.env.ALVIN_HASH]}))')"
-  state="$(d1_query "$state_body")"
-  attempts="$(node -e 'const x=JSON.parse(process.argv[1]);const r=x.result?.[0]?.results?.[0]||{};process.stdout.write(String(Number(r.attempts)||0))' "$state")"
-  echo "::error::Alvin repair did not verify within the guarded window, attempts=${attempts}"
+  echo "::error::Alvin repair did not produce a verified encrypted backup within the guarded window"
   exit 9
 fi
 
-target_inserted=0
+echo "stage=remove_reported_target"
+bash scripts/remove-reported-repair-secret.sh
+secret_maybe_present=0
+
+echo "stage=restore_production_worker"
 deploy_worker /tmp/prod-worker.js
 restore_required=0
 
@@ -220,9 +213,5 @@ if(JSON.stringify(before)!==JSON.stringify(safe))process.exit(3);
 
 schedules_after="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/schedules")"
 node -e 'const x=JSON.parse(process.argv[1]);const s=x.result?.schedules||[];if(!x.success||!s.some(v=>v.cron==="*/10 * * * *"))process.exit(2)' "$schedules_after"
-
-final_target_body="$(node -e 'process.stdout.write(JSON.stringify({sql:"SELECT item_hash FROM repair_targets_v1 WHERE item_hash=?",params:[process.env.ALVIN_HASH]}))')"
-final_target="$(d1_query "$final_target_body")"
-node -e 'const x=JSON.parse(process.argv[1]);if(!x.success)process.exit(2);if((x.result?.[0]?.results||[]).length)process.exit(3)' "$final_target"
 
 echo "production_worker_restored_and_alvin_repair_closed"
