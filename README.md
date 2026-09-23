@@ -6,7 +6,13 @@ The production service is a private Cloudflare scheduled Worker. It runs every 1
 
 ## Current production state
 
-Version 1.7.3 is production accepted from product source commit `94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495`.
+Version 1.7.3 remains the published release. A guarded production hotfix was deployed on 24 September 2026 from source commit `9ed1a5b9362eb532211cf3827d300ed51bb023e8`.
+
+The hotfix adds recognition of explicit series title-level watched transitions that increment the series watched counter without changing the episode bitmap. This closes a case where a title can be marked watched yet retain stale Continue Watching progress.
+
+Deployment verification preserved the existing Worker bindings and ten-minute cron, and the live Worker source matched SHA-256 `b87c79c1be33b1d5e665b5915a2589d7d34d1dd274e7053963358bcf8e3950d2`.
+
+The original v1.7.3 production acceptance source was commit `94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495`.
 
 The final secret-free Worker deployment preserves the ten-minute cron and the existing bindings. Production acceptance proved three independently reported Continue Watching examples at an exact zero resume offset with an encrypted pre-write recovery record for each repair. The temporary target secret used during acceptance was removed afterwards.
 

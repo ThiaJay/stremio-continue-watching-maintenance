@@ -1,10 +1,10 @@
 {
   "product": "Continue Watching Maintenance for Stremio",
   "version": "1.7.3",
-  "status": "LIVE_PRODUCTION_ACCEPTED_RELEASED",
+  "status": "LIVE_PRODUCTION_HOTFIX_VERIFIED",
   "classification": "hosted-maintenance",
-  "productSourceCommit": "94a4d5ef91d10211fe3a09f3dfc4eb2c5ef47495",
-  "finalProductionDeploymentPrefix": "ebb3a6b38626",
+  "productSourceCommit": "9ed1a5b9362eb532211cf3827d300ed51bb023e8",
+  "finalProductionDeploymentPrefix": "5b68e203-fbe",
   "normalMode": "private scheduled maintenance",
   "publicProtocolSurface": "NONE",
   "cron": "*/10 * * * *",
@@ -74,5 +74,16 @@
     "nativeMarkWatched": "Stremio/stremio-core#1060 merged and released",
     "nativeMarkSeasonWatched": "Stremio/stremio-core#1062 merged and released",
     "retirementPolicy": "Retain guarded hosted maintenance until overlapping native behaviour is independently verified across live clients."
+  },
+  "productionHotfix": {
+    "deployedAt": "2026-09-24",
+    "sourceCommit": "9ed1a5b9362eb532211cf3827d300ed51bb023e8",
+    "deploymentPrefix": "5b68e203-fbe",
+    "liveSourceSha256": "b87c79c1be33b1d5e665b5915a2589d7d34d1dd274e7053963358bcf8e3950d2",
+    "deploymentWorkflowRun": 35934550455,
+    "crossPlatformCi": "passed",
+    "guardedDeployment": "passed",
+    "settingsAndBindingsPreserved": true,
+    "tenMinuteCronPreserved": true
   }
 }
