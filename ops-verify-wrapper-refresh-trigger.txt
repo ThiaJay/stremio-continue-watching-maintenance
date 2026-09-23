@@ -1,1 +1,2 @@
 Verify scheduled wrapper manifest refresh after guarded controller deployment.
+Post fail closed deployment verification trigger.
