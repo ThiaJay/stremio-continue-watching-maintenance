@@ -1,0 +1,91 @@
+200: async function run(env, when = Date.now(), deps = {}) {
+201:   assert(/^[0-9a-f]{64}$/i.test(env.EXPECTED_ACCOUNT_FINGERPRINT || ""), "EXPECTED_ACCOUNT_REQUIRED");
+202:   assert(await fingerprint(env, deps.fetchImpl || fetch) === env.EXPECTED_ACCOUNT_FINGERPRINT.toLowerCase(), "ACCOUNT_CHANGED");
+203:   const before = await getCollection(env, true, deps.fetchImpl || fetch), beforeHash = await sha(before), b = await bindings(env);
+204:   for (const def of Object.values(PROVIDERS)) assert(before.some((x) => x?.manifest?.id === def.wrapperId), "WRAPPER_MISSING_" + def.wrapperId);
+205:   const decisions = [], removeIndexes = /* @__PURE__ */ new Set(), errors = [];
+206:   let candidatesSeen = 0, ambiguous = 0, rebinds = 0;
+207:   for (const provider of Object.keys(PROVIDERS)) {
+208:     const row = b[provider];
+209:     let currentUsable = false;
+210:     try {
+211:       await validateRoot(provider, row, row.current_root, deps.fetchImpl || fetch);
+212:       await touchBinding(env, provider, when);
+213:       currentUsable = true;
+214:     } catch (currentError) {
+215:       if (row.previous_root) {
+216:         try {
+217:           const previousMeta = await validateRoot(provider, row, row.previous_root, deps.fetchImpl || fetch);
+218:           await rollbackBinding(env, provider, row, previousMeta, when);
+219:           errors.push(provider + ":ROLLED_BACK_CURRENT_PROVIDER");
+220:           currentUsable = true;
+221:         } catch {
+222:         }
+223:       }
+224:       if (!currentUsable) errors.push(provider + ":" + (currentError?.code || "CURRENT_PROVIDER_INVALID"));
+225:     }
+226:     const found = discover(provider, row, before);
+227:     candidatesSeen += found.length;
+228:     const valid = [];
+229:     for (const c of found.slice(0, 5)) {
+230:       try {
+231:         valid.push({ ...c, meta: await validateRoot(provider, row, c.root, deps.fetchImpl || fetch) });
+232:       } catch (e) {
+233:         errors.push(provider + ":" + (e?.code || "INVALID_CANDIDATE"));
+234:       }
+235:     }
+236:     const unknown = valid.filter((x) => x.root !== row.current_root);
+237:     if (unknown.length > 1) {
+238:       ambiguous++;
+239:       errors.push(provider + ":AMBIGUOUS_REPLACEMENT");
+240:       continue;
+241:     }
+242:     if (unknown.length === 1) {
+243:       decisions.push({ provider, row, next: unknown[0] });
+244:       rebinds++;
+245:       for (const x of valid) removeIndexes.add(x.index);
+246:       continue;
+247:     }
+248:     const current = valid.filter((x) => x.root === row.current_root);
+249:     if (current.length) {
+250:       if (!currentUsable) {
+251:         await touchBinding(env, provider, when);
+252:         currentUsable = true;
+253:       }
+254:       for (const x of current) removeIndexes.add(x.index);
+255:       decisions.push({ provider, row, next: null, current: current[0] });
+256:     }
+257:   }
+258:   const fresh = await getCollection(env, false, deps.fetchImpl || fetch);
+259:   assert(await sha(fresh) === beforeHash, "COLLECTION_CHANGED_BEFORE_REBIND");
+260:   for (const d of decisions) {
+261:     if (d.next) await setBinding(env, d.provider, d.row, d.next.root, d.next.meta, when);
+262:     else await touchBinding(env, d.provider, when);
+263:   }
+264:   let duplicatesRemoved = 0;
+265:   if (removeIndexes.size) {
+266:     const next = before.filter((_, i) => !removeIndexes.has(i));
+267:     const expectedRemoved = before.length - next.length;
+268:     const prewrite = await getCollection(env, false, deps.fetchImpl || fetch);
+269:     assert(await sha(prewrite) === beforeHash, "COLLECTION_CHANGED_BEFORE_WRITE");
+270:     await backupCollection(env, before, when);
+271:     let setConfirmed = false, setError = null;
+272:     try {
+273:       const result = await stremio(env, "addonCollectionSet", { type: "AddonCollectionSet", addons: next }, deps.fetchImpl || fetch);
+274:       setConfirmed = result === true || result?.success === true;
+275:     } catch (e) {
+276:       setError = e;
+277:     }
+278:     const after = await getCollection(env, false, deps.fetchImpl || fetch), afterHash = await sha(after), nextHash = await sha(next);
+279:     if (afterHash === nextHash) {
+280:       duplicatesRemoved = expectedRemoved;
+281:       for (const def of Object.values(PROVIDERS)) assert(after.some((x) => x?.manifest?.id === def.wrapperId), "WRAPPER_REMOVED");
+282:     } else if (afterHash === beforeHash) {
+283:       errors.push("collection:" + (setError?.code || (!setConfirmed ? "COLLECTION_SET_NOT_CONFIRMED" : "LONG_VALUE")));
+284:     } else {
+285:       throw new BindError("COLLECTION_AMBIGUOUS_WRITE");
+286:     }
+287:   }
+288:   await writeControllerState(env, when, { candidatesSeen, rebinds, duplicatesRemoved, ambiguous, errors });
+289:   return { candidatesSeen, rebinds, duplicatesRemoved, ambiguous, errorCodes: [...new Set(errors)].slice(0, 20) };
+290: }
