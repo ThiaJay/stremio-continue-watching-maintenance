@@ -1,4 +1,4 @@
-name: Inspect addon binding controller
+name: Inspect addon binding controller logic
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ops/stream-compatibility-regression-20260923
-      - name: Inspect controller source safely
+      - name: Extract controller logic safely
         shell: bash
         run: |
           set -euo pipefail
@@ -29,9 +29,8 @@ jobs:
           from email.parser import BytesParser
           from email.policy import default
           from pathlib import Path
-          import hashlib,re,json
-          headers=Path("headers.txt").read_bytes()
-          body=Path("content.bin").read_bytes()
+          import re
+          headers=Path("headers.txt").read_bytes(); body=Path("content.bin").read_bytes()
           matches=re.findall(br"(?im)^content-type:\s*([^\r\n]+)",headers)
           ctype=matches[-1].decode("latin1").strip() if matches else ""
           found=None
@@ -40,39 +39,26 @@ jobs:
               msg=BytesParser(policy=default).parsebytes(synthetic)
               for p in msg.iter_parts():
                   raw=p.get_payload(decode=True) or b""
-                  if b"export default" in raw or b"scheduled(" in raw:
-                      found=raw
-                      break
-          else:
-              found=body
-          if found is None: raise SystemExit("controller module not found")
-          text=found.decode("utf-8","replace")
-          terms=["addonCollection","manifest","transportUrl","rebind","duplicate","candidate","collection"]
-          lines=[]
-          for i,line in enumerate(text.splitlines(),1):
-              if any(t.lower() in line.lower() for t in terms):
-                  safe=re.sub(r'https?://[^"\'\s]+','URL',line)
-                  safe=re.sub(r'[A-Za-z0-9_-]{40,}','LONG_VALUE',safe)
-                  safe=safe[:260]
-                  lines.append({"line":i,"text":safe})
-          out={
-            "schema":1,
-            "sourceSha256":hashlib.sha256(found).hexdigest(),
-            "hasAddonCollectionGet":"addonCollectionGet" in text,
-            "hasAddonCollectionSet":"addonCollectionSet" in text,
-            "hasManifestComparison":bool(re.search(r'manifest.{0,120}(name|version)|(name|version).{0,120}manifest',text,re.I|re.S)),
-            "hasTransportUrl":"transportUrl" in text,
-            "matchedLines":lines[:120]
-          }
+                  if b"async function reconcile" in raw or b"addonCollectionSet" in raw:
+                      found=raw; break
+          else: found=body
+          if found is None: raise SystemExit("module not found")
+          lines=found.decode("utf-8","replace").splitlines()
+          out=[]
+          for n in range(200,min(291,len(lines)+1)):
+              line=lines[n-1]
+              line=re.sub(r'https?://[^"\'\s]+','URL',line)
+              line=re.sub(r'[A-Za-z0-9_-]{40,}','LONG_VALUE',line)
+              out.append(f"{n}: {line[:300]}")
           Path("ops-receipts").mkdir(exist_ok=True)
-          Path("ops-receipts/addon-binding-controller-inspection-20260923.json").write_text(json.dumps(out,indent=2)+"\n")
+          Path("ops-receipts/addon-binding-controller-logic-20260923.txt").write_text("\n".join(out)+"\n")
           PY
-      - name: Commit sanitised controller inspection
+      - name: Commit sanitised logic receipt
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ops-receipts/addon-binding-controller-inspection-20260923.json
-          git commit -m "ops: inspect addon binding controller"
+          git add ops-receipts/addon-binding-controller-logic-20260923.txt
+          git commit -m "ops: inspect addon binding controller logic"
           git push origin HEAD:ops/stream-compatibility-regression-20260923
