@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "result": "deployed",
+  "sourceSha256": "764d05dad971e6c5ae87300dbc0ed0afb0e08dc444e5ff101840559a00130700",
+  "settingsPreserved": true,
+  "testsPassed": true,
+  "refreshPolicy": "same installed wrapper transport, stable wrapper id, required resources, non-generic visible name, encrypted backup and exact collection readback"
+}
