@@ -1,0 +1,199 @@
+1: var __defProp = Object.defineProperty;
+2: var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+3: 
+4: // src/worker.js
+5: var STREMIO_API = "URL";
+6: var WRAPPERS = /* @__PURE__ */ new Set(["org.thiajay.aiometadata-smart-specials", "org.thiajay.stream-compatibility"]);
+7: var PROVIDERS = Object.freeze({
+8:   aiometadata: { wrapperId: "org.thiajay.aiometadata-smart-specials", requiredResources: ["catalog", "meta"], manifestId: "aio-metadata", manifestName: "AIOMetadata" },
+9:   maelstrom: { wrapperId: "org.thiajay.stream-compatibility", requiredResources: ["stream"], manifestId: null, manifestName: "Maelstrom" }
+10: });
+11: var BACKUP_TTL_MS = 14 * 24 * 60 * 60 * 1e3;
+12: var BindError = class extends Error {
+13:   static {
+14:     __name(this, "BindError");
+15:   }
+16:   constructor(code) {
+17:     super(code);
+18:     this.name = "BindError";
+19:     this.code = code;
+20:   }
+21: };
+22: var assert = /* @__PURE__ */ __name((x, c) => {
+23:   if (!x) throw new BindError(c);
+24: }, "assert");
+25: function resources(m) {
+26:   return (m?.resources || []).map((x) => typeof x === "string" ? x : x?.name).filter(Boolean);
+27: }
+28: __name(resources, "resources");
+29: function canonical(v) {
+30:   if (Array.isArray(v)) return v.map(canonical);
+31:   if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])]));
+32:   return v;
+33: }
+34: __name(canonical, "canonical");
+35: async function sha(v) {
+36:   const b = new TextEncoder().encode(JSON.stringify(canonical(v)));
+37:   const d = await crypto.subtle.digest("SHA-256", b);
+38:   return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+39: }
+40: __name(sha, "sha");
+41: function b64(bytes) {
+42:   let s = "";
+43:   for (const b of bytes) s += String.fromCharCode(b);
+44:   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+45: }
+46: __name(b64, "b64");
+47: function unb64(v) {
+48:   const s = String(v).replace(/-/g, "+").replace(/_/g, "/");
+49:   const p = s + "=".repeat((4 - s.length % 4) % 4);
+50:   return Uint8Array.from(atob(p), (c) => c.charCodeAt(0));
+51: }
+52: __name(unb64, "unb64");
+53: async function backupCryptoKey(secret) {
+54:   assert(typeof secret === "string" && secret.length >= 40, "BACKUP_KEY_REQUIRED");
+55:   const raw = unb64(secret.trim());
+56:   assert(raw.byteLength === 32, "BACKUP_KEY_INVALID");
+57:   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+58: }
+59: __name(backupCryptoKey, "backupCryptoKey");
+60: async function encryptBackup(value, secret) {
+61:   const iv = crypto.getRandomValues(new Uint8Array(12)), key = await backupCryptoKey(secret), plain = new TextEncoder().encode(JSON.stringify(value));
+62:   assert(plain.byteLength <= 2e6, "BACKUP_TOO_LARGE");
+63:   const enc = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode("stremio-addon-collection-backup-v1") }, key, plain));
+64:   return JSON.stringify({ v: 1, iv: b64(iv), data: b64(enc) });
+65: }
+66: __name(encryptBackup, "encryptBackup");
+67: async function backupCollection(env, collection, at) {
+68:   assert(env.BINDINGS_DB?.prepare, "BINDINGS_DB_REQUIRED");
+69:   const payload = await encryptBackup({ schema: 1, createdAt: new Date(at).toISOString(), addons: collection }, env.BACKUP_ENCRYPTION_KEY);
+70:   const key = `v1/${new Date(at).toISOString().slice(0, 10)}/${crypto.randomUUID()}`;
+71:   const r = await env.BINDINGS_DB.prepare("INSERT INTO collection_backups(backup_key,created_at,expires_at,payload) VALUES(?,?,?,?)").bind(key, at, at + BACKUP_TTL_MS, payload).run();
+72:   assert(r?.success !== false, "COLLECTION_BACKUP_FAILED");
+73:   return key;
+74: }
+75: __name(backupCollection, "backupCollection");
+76: function safeTransportRoot(transportUrl, expectedHost) {
+77:   let u;
+78:   try {
+79:     u = new URL(String(transportUrl || ""));
+80:   } catch {
+81:     return null;
+82:   }
+83:   if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.port && u.port !== "443") return null;
+84:   if (u.hostname.toLowerCase() !== String(expectedHost || "").toLowerCase()) return null;
+85:   if (!u.pathname.endsWith("/manifest.json")) return null;
+86:   const root = u.pathname.slice(0, -"/manifest.json".length);
+87:   if (!root.startsWith("/stremio/") || root.length > 4096) return null;
+88:   u.pathname = root;
+89:   return u.toString().replace(/\/$/, "");
+90: }
+91: __name(safeTransportRoot, "safeTransportRoot");
+92: function providerDescriptor(provider, row, descriptor) {
+93:   const def = PROVIDERS[provider];
+94:   if (!def || !descriptor || WRAPPERS.has(descriptor?.manifest?.id)) return null;
+95:   const root = safeTransportRoot(descriptor.transportUrl, row.expected_host);
+96:   if (!root) return null;
+97:   const m = descriptor.manifest || {};
+98:   const rs = resources(m);
+99:   if (def.manifestId && m.id !== def.manifestId) return null;
+100:   if (def.manifestName && !String(m.name || "").startsWith(def.manifestName)) return null;
+101:   if (!def.requiredResources.every((x) => rs.includes(x))) return null;
+102:   return { root, index: null, manifest: m };
+103: }
+104: __name(providerDescriptor, "providerDescriptor");
+105: async function boundedJson(r, limit = 4e6) {
+106:   if (!(r.headers.get("content-type") || "").toLowerCase().includes("json")) throw new BindError("NOT_JSON");
+107:   const b = new Uint8Array(await r.arrayBuffer());
+108:   if (b.byteLength > limit) throw new BindError("RESPONSE_TOO_LARGE");
+109:   try {
+110:     return JSON.parse(new TextDecoder().decode(b));
+111:   } catch {
+112:     throw new BindError("INVALID_JSON");
+113:   }
+114: }
+115: __name(boundedJson, "boundedJson");
+116: async function validateRoot(provider, row, root, fetchImpl = fetch) {
+117:   const def = PROVIDERS[provider];
+118:   const url = root + "/manifest.json";
+119:   const r = await fetchImpl(url, { redirect: "manual", signal: AbortSignal.timeout(8e3), headers: { "user-agent": "Stremio-Binding-Controller/1.0" } });
+120:   if (r.status >= 300 && r.status < 400) throw new BindError("UPSTREAM_REDIRECT");
+121:   if (!r.ok) throw new BindError("UPSTREAM_HTTP_" + r.status);
+122:   const m = await boundedJson(r), rs = resources(m);
+123:   if (def.manifestId && m.id !== def.manifestId) throw new BindError("MANIFEST_ID_MISMATCH");
+124:   if (def.manifestName && !String(m.name || "").startsWith(def.manifestName)) throw new BindError("MANIFEST_NAME_MISMATCH");
+125:   if (!def.requiredResources.every((x) => rs.includes(x))) throw new BindError("MANIFEST_RESOURCE_MISMATCH");
+126:   return { id: m.id || null, name: m.name || null, version: String(m.version || "") };
+127: }
+128: __name(validateRoot, "validateRoot");
+129: async function stremio(env, endpoint, args = {}, fetchImpl = fetch) {
+130:   assert(typeof env.STREMIO_AUTHKEY === "string" && env.STREMIO_AUTHKEY.length >= 8, "AUTH_REQUIRED");
+131:   const r = await fetchImpl(STREMIO_API + "/" + endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...args, authKey: env.STREMIO_AUTHKEY }), redirect: "manual", signal: AbortSignal.timeout(15e3) });
+132:   if (r.status >= 300 && r.status < 400) throw new BindError("STREMIO_REDIRECT");
+133:   if (!r.ok) throw new BindError("STREMIO_HTTP_" + r.status);
+134:   const j = await boundedJson(r, 8e6);
+135:   return j.result;
+136: }
+137: __name(stremio, "stremio");
+138: async function fingerprint(env, fetchImpl = fetch) {
+139:   const u = await stremio(env, "getUser", {}, fetchImpl), id = u?._id ?? u?.id;
+140:   assert(typeof id === "string" && id, "ACCOUNT_ID_MISSING");
+141:   const b = new TextEncoder().encode("stremio:" + id), d = await crypto.subtle.digest("SHA-256", b);
+142:   return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+143: }
+144: __name(fingerprint, "fingerprint");
+145: async function getCollection(env, update = false, fetchImpl = fetch) {
+146:   const r = await stremio(env, "addonCollectionGet", { update }, fetchImpl), list = Array.isArray(r) ? r : Array.isArray(r?.addons) ? r.addons : null;
+147:   assert(Array.isArray(list) && list.length <= 100, "COLLECTION_INVALID");
+148:   return list;
+149: }
+150: __name(getCollection, "getCollection");
+151: async function bindings(env) {
+152:   assert(env.BINDINGS_DB?.prepare, "BINDINGS_DB_REQUIRED");
+153:   const r = await env.BINDINGS_DB.prepare("SELECT provider,current_root,previous_root,expected_host,expected_manifest_id,expected_manifest_name,current_version FROM provider_bindings ORDER BY provider").all();
+154:   const rows = r?.results || [];
+155:   assert(rows.length === 2, "BINDINGS_INCOMPLETE");
+156:   return Object.fromEntries(rows.map((x) => [x.provider, x]));
+157: }
+158: __name(bindings, "bindings");
+159: function discover(provider, row, list) {
+160:   const seen = /* @__PURE__ */ new Map();
+161:   list.forEach((d, i) => {
+162:     const x = providerDescriptor(provider, row, d);
+163:     if (x) {
+164:       x.index = i;
+165:       if (!seen.has(x.root)) seen.set(x.root, x);
+166:     }
+167:   });
+168:   return [...seen.values()];
+169: }
+170: __name(discover, "discover");
+171: async function event(env, provider, eventType, oldRoot, newRoot, details, at) {
+172:   await env.BINDINGS_DB.prepare("INSERT INTO binding_events(event_id,provider,event_type,old_root,new_root,at,details) VALUES(?,?,?,?,?,?,?)").bind(crypto.randomUUID(), provider, eventType, oldRoot || null, newRoot || null, at, JSON.stringify(details || {})).run();
+173: }
+174: __name(event, "event");
+175: async function setBinding(env, provider, row, next, meta, at) {
+176:   const r = await env.BINDINGS_DB.prepare("UPDATE provider_bindings SET previous_root=current_root,current_root=?,current_version=?,updated_at=?,last_validated_at=? WHERE provider=? AND current_root=?").bind(next, meta.version || "", at, at, provider, row.current_root).run();
+177:   assert(r?.success !== false && Number(r?.meta?.changes ?? r?.changes ?? 1) !== 0, "BINDING_UPDATE_FAILED");
+178:   await event(env, provider, "rebind", row.current_root, next, { version: meta.version || null }, at);
+179: }
+180: __name(setBinding, "setBinding");
+181: async function touchBinding(env, provider, at) {
+182:   await env.BINDINGS_DB.prepare("UPDATE provider_bindings SET last_validated_at=? WHERE provider=?").bind(at, provider).run();
+183: }
+184: __name(touchBinding, "touchBinding");
+185: async function rollbackBinding(env, provider, row, meta, at) {
+186:   assert(row.previous_root, "NO_PREVIOUS_BINDING");
+187:   const r = await env.BINDINGS_DB.prepare("UPDATE provider_bindings SET current_root=previous_root,previous_root=current_root,current_version=?,updated_at=?,last_validated_at=? WHERE provider=? AND current_root=?").bind(meta.version || "", at, at, provider, row.current_root).run();
+188:   assert(r?.success !== false && Number(r?.meta?.changes ?? r?.changes ?? 1) !== 0, "BINDING_ROLLBACK_FAILED");
+189:   await event(env, provider, "rollback", row.current_root, row.previous_root, { version: meta.version || null }, at);
+190:   const old = row.current_root;
+191:   row.current_root = row.previous_root;
+192:   row.previous_root = old;
+193:   row.current_version = meta.version || "";
+194: }
+195: __name(rollbackBinding, "rollbackBinding");
+196: async function writeControllerState(env, when, { candidatesSeen = 0, rebinds = 0, duplicatesRemoved = 0, ambiguous = 0, errors = [] } = {}) {
+197:   await env.BINDINGS_DB.prepare("INSERT INTO controller_state(state_key,last_run,candidates_seen,rebinds,duplicates_removed,ambiguous,errors) VALUES('latest',?,?,?,?,?,?) ON CONFLICT(state_key) DO UPDATE SET last_run=excluded.last_run,candidates_seen=excluded.candidates_seen,rebinds=excluded.rebinds
+198: }
+199: __name(writeControllerState, "writeControllerState");
