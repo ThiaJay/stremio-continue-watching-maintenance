@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "sourceSha256": "9be4a03f457f3d5217092e694a32499d245a399d7d39b2bea3c5f0b9ed9fbe34",
+  "hasAddonCollectionGet": true,
+  "hasAddonCollectionSet": true,
+  "hasManifestComparison": true,
+  "hasTransportUrl": true,
+  "matchedLines": [
+    {
+      "line": 8,
+      "text": "  aiometadata: { wrapperId: \"org.thiajay.aiometadata-smart-specials\", requiredResources: [\"catalog\", \"meta\"], manifestId: \"aio-metadata\", manifestName: \"AIOMetadata\" },"
+    },
+    {
+      "line": 9,
+      "text": "  maelstrom: { wrapperId: \"org.thiajay.stream-compatibility\", requiredResources: [\"stream\"], manifestId: null, manifestName: \"Maelstrom\" }"
+    },
+    {
+      "line": 63,
+      "text": "  const enc = new Uint8Array(await crypto.subtle.encrypt({ name: \"AES-GCM\", iv, additionalData: new TextEncoder().encode(\"stremio-addon-collection-backup-v1\") }, key, plain));"
+    },
+    {
+      "line": 67,
+      "text": "async function backupCollection(env, collection, at) {"
+    },
+    {
+      "line": 69,
+      "text": "  const payload = await encryptBackup({ schema: 1, createdAt: new Date(at).toISOString(), addons: collection }, env.BACKUP_ENCRYPTION_KEY);"
+    },
+    {
+      "line": 71,
+      "text": "  const r = await env.BINDINGS_DB.prepare(\"INSERT INTO collection_backups(backup_key,created_at,expires_at,payload) VALUES(?,?,?,?)\").bind(key, at, at + BACKUP_TTL_MS, payload).run();"
+    },
+    {
+      "line": 72,
+      "text": "  assert(r?.success !== false, \"COLLECTION_BACKUP_FAILED\");"
+    },
+    {
+      "line": 75,
+      "text": "__name(backupCollection, \"backupCollection\");"
+    },
+    {
+      "line": 76,
+      "text": "function safeTransportRoot(transportUrl, expectedHost) {"
+    },
+    {
+      "line": 79,
+      "text": "    u = new URL(String(transportUrl || \"\"));"
+    },
+    {
+      "line": 85,
+      "text": "  if (!u.pathname.endsWith(\"/manifest.json\")) return null;"
+    },
+    {
+      "line": 86,
+      "text": "  const root = u.pathname.slice(0, -\"/manifest.json\".length);"
+    },
+    {
+      "line": 94,
+      "text": "  if (!def || !descriptor || WRAPPERS.has(descriptor?.manifest?.id)) return null;"
+    },
+    {
+      "line": 95,
+      "text": "  const root = safeTransportRoot(descriptor.transportUrl, row.expected_host);"
+    },
+    {
+      "line": 97,
+      "text": "  const m = descriptor.manifest || {};"
+    },
+    {
+      "line": 99,
+      "text": "  if (def.manifestId && m.id !== def.manifestId) return null;"
+    },
+    {
+      "line": 100,
+      "text": "  if (def.manifestName && !String(m.name || \"\").startsWith(def.manifestName)) return null;"
+    },
+    {
+      "line": 102,
+      "text": "  return { root, index: null, manifest: m };"
+    },
+    {
+      "line": 118,
+      "text": "  const url = root + \"/manifest.json\";"
+    },
+    {
+      "line": 123,
+      "text": "  if (def.manifestId && m.id !== def.manifestId) throw new BindError(\"MANIFEST_ID_MISMATCH\");"
+    },
+    {
+      "line": 124,
+      "text": "  if (def.manifestName && !String(m.name || \"\").startsWith(def.manifestName)) throw new BindError(\"MANIFEST_NAME_MISMATCH\");"
+    },
+    {
+      "line": 125,
+      "text": "  if (!def.requiredResources.every((x) => rs.includes(x))) throw new BindError(\"MANIFEST_RESOURCE_MISMATCH\");"
+    },
+    {
+      "line": 145,
+      "text": "async function getCollection(env, update = false, fetchImpl = fetch) {"
+    },
+    {
+      "line": 146,
+      "text": "  const r = await stremio(env, \"addonCollectionGet\", { update }, fetchImpl), list = Array.isArray(r) ? r : Array.isArray(r?.addons) ? r.addons : null;"
+    },
+    {
+      "line": 147,
+      "text": "  assert(Array.isArray(list) && list.length <= 100, \"COLLECTION_INVALID\");"
+    },
+    {
+      "line": 150,
+      "text": "__name(getCollection, \"getCollection\");"
+    },
+    {
+      "line": 153,
+      "text": "  const r = await env.BINDINGS_DB.prepare(\"SELECT provider,current_root,previous_root,expected_host,expected_manifest_id,expected_manifest_name,current_version FROM provider_bindings ORDER BY provider\").all();"
+    },
+    {
+      "line": 178,
+      "text": "  await event(env, provider, \"rebind\", row.current_root, next, { version: meta.version || null }, at);"
+    },
+    {
+      "line": 196,
+      "text": "async function writeControllerState(env, when, { candidatesSeen = 0, rebinds = 0, duplicatesRemoved = 0, ambiguous = 0, errors = [] } = {}) {"
+    },
+    {
+      "line": 197,
+      "text": "  await env.BINDINGS_DB.prepare(\"INSERT INTO controller_state(state_key,last_run,candidates_seen,rebinds,duplicates_removed,ambiguous,errors) VALUES('latest',?,?,?,?,?,?) ON CONFLICT(state_key) DO UPDATE SET last_run=excluded.last_run,candidates_seen=excluded."
+    },
+    {
+      "line": 203,
+      "text": "  const before = await getCollection(env, true, deps.fetchImpl || fetch), beforeHash = await sha(before), b = await bindings(env);"
+    },
+    {
+      "line": 204,
+      "text": "  for (const def of Object.values(PROVIDERS)) assert(before.some((x) => x?.manifest?.id === def.wrapperId), \"WRAPPER_MISSING_\" + def.wrapperId);"
+    },
+    {
+      "line": 206,
+      "text": "  let candidatesSeen = 0, ambiguous = 0, rebinds = 0;"
+    },
+    {
+      "line": 227,
+      "text": "    candidatesSeen += found.length;"
+    },
+    {
+      "line": 233,
+      "text": "        errors.push(provider + \":\" + (e?.code || \"INVALID_CANDIDATE\"));"
+    },
+    {
+      "line": 244,
+      "text": "      rebinds++;"
+    },
+    {
+      "line": 258,
+      "text": "  const fresh = await getCollection(env, false, deps.fetchImpl || fetch);"
+    },
+    {
+      "line": 259,
+      "text": "  assert(await sha(fresh) === beforeHash, \"COLLECTION_CHANGED_BEFORE_REBIND\");"
+    },
+    {
+      "line": 264,
+      "text": "  let duplicatesRemoved = 0;"
+    },
+    {
+      "line": 268,
+      "text": "    const prewrite = await getCollection(env, false, deps.fetchImpl || fetch);"
+    },
+    {
+      "line": 269,
+      "text": "    assert(await sha(prewrite) === beforeHash, \"COLLECTION_CHANGED_BEFORE_WRITE\");"
+    },
+    {
+      "line": 270,
+      "text": "    await backupCollection(env, before, when);"
+    },
+    {
+      "line": 273,
+      "text": "      const result = await stremio(env, \"addonCollectionSet\", { type: \"AddonCollectionSet\", addons: next }, deps.fetchImpl || fetch);"
+    },
+    {
+      "line": 278,
+      "text": "    const after = await getCollection(env, false, deps.fetchImpl || fetch), afterHash = await sha(after), nextHash = await sha(next);"
+    },
+    {
+      "line": 280,
+      "text": "      duplicatesRemoved = expectedRemoved;"
+    },
+    {
+      "line": 281,
+      "text": "      for (const def of Object.values(PROVIDERS)) assert(after.some((x) => x?.manifest?.id === def.wrapperId), \"WRAPPER_REMOVED\");"
+    },
+    {
+      "line": 283,
+      "text": "      errors.push(\"collection:\" + (setError?.code || (!setConfirmed ? \"COLLECTION_SET_NOT_CONFIRMED\" : \"LONG_VALUE\")));"
+    },
+    {
+      "line": 285,
+      "text": "      throw new BindError(\"COLLECTION_AMBIGUOUS_WRITE\");"
+    },
+    {
+      "line": 288,
+      "text": "  await writeControllerState(env, when, { candidatesSeen, rebinds, duplicatesRemoved, ambiguous, errors });"
+    },
+    {
+      "line": 289,
+      "text": "  return { candidatesSeen, rebinds, duplicatesRemoved, ambiguous, errorCodes: [...new Set(errors)].slice(0, 20) };"
+    },
+    {
+      "line": 313,
+      "text": "  backupCollection,"
+    }
+  ]
+}
