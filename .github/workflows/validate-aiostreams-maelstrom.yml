@@ -1,4 +1,4 @@
-name: Inspect stream compatibility binding values
+name: Inspect addon binding controller
 
 on:
   push:
@@ -15,42 +15,64 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      SCRIPT_NAME: stremio-stream-compatibility
+      SCRIPT_NAME: stremio-addon-binding-controller
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ops/stream-compatibility-regression-20260923
-      - name: Inspect provider binding metadata safely
+      - name: Inspect controller source safely
         shell: bash
         run: |
           set -euo pipefail
-          settings="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/settings")"
-          dbid="$(node -e 'const x=JSON.parse(process.argv[1]); const b=(x.result?.bindings||[]).find(v=>v.name==="BINDINGS_DB"); if(!b)process.exit(2); process.stdout.write(String(b.id||b.database_id||""));' "$settings")"
-          test -n "$dbid"
-          response="$(curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data '{"sql":"SELECT provider,current_root,expected_host,expected_manifest_id,expected_manifest_name,current_version,updated_at,last_validated_at FROM provider_bindings ORDER BY provider"}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$dbid/query")"
-          node - <<'NODE' "$response"
-          const fs=require("fs"), crypto=require("crypto");
-          const x=JSON.parse(process.argv[2]);
-          if(!x.success) process.exit(3);
-          const rows=(x.result||[]).flatMap(r=>r.results||[]).map(r=>({
-            provider:String(r.provider||""),
-            currentRootSha256:crypto.createHash("sha256").update(String(r.current_root||"")).digest("hex"),
-            expectedHost:String(r.expected_host||""),
-            expectedManifestId:String(r.expected_manifest_id||""),
-            expectedManifestName:String(r.expected_manifest_name||""),
-            currentVersion:String(r.current_version||""),
-            updatedAt:Number(r.updated_at||0),
-            lastValidatedAt:Number(r.last_validated_at||0)
-          }));
-          fs.mkdirSync("ops-receipts",{recursive:true});
-          fs.writeFileSync("ops-receipts/stream-binding-values-20260923.json",JSON.stringify({schema:1,rows},null,2)+"\n");
-          NODE
-      - name: Commit sanitised binding receipt
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -D headers.txt "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/content/v2" -o content.bin
+          python3 - <<'PY'
+          from email.parser import BytesParser
+          from email.policy import default
+          from pathlib import Path
+          import hashlib,re,json
+          headers=Path("headers.txt").read_bytes()
+          body=Path("content.bin").read_bytes()
+          matches=re.findall(br"(?im)^content-type:\s*([^\r\n]+)",headers)
+          ctype=matches[-1].decode("latin1").strip() if matches else ""
+          found=None
+          if ctype.lower().startswith("multipart/"):
+              synthetic=("Content-Type: "+ctype+"\r\nMIME-Version: 1.0\r\n\r\n").encode("latin1")+body
+              msg=BytesParser(policy=default).parsebytes(synthetic)
+              for p in msg.iter_parts():
+                  raw=p.get_payload(decode=True) or b""
+                  if b"export default" in raw or b"scheduled(" in raw:
+                      found=raw
+                      break
+          else:
+              found=body
+          if found is None: raise SystemExit("controller module not found")
+          text=found.decode("utf-8","replace")
+          terms=["addonCollection","manifest","transportUrl","rebind","duplicate","candidate","collection"]
+          lines=[]
+          for i,line in enumerate(text.splitlines(),1):
+              if any(t.lower() in line.lower() for t in terms):
+                  safe=re.sub(r'https?://[^"\'\s]+','URL',line)
+                  safe=re.sub(r'[A-Za-z0-9_-]{40,}','LONG_VALUE',safe)
+                  safe=safe[:260]
+                  lines.append({"line":i,"text":safe})
+          out={
+            "schema":1,
+            "sourceSha256":hashlib.sha256(found).hexdigest(),
+            "hasAddonCollectionGet":"addonCollectionGet" in text,
+            "hasAddonCollectionSet":"addonCollectionSet" in text,
+            "hasManifestComparison":bool(re.search(r'manifest.{0,120}(name|version)|(name|version).{0,120}manifest',text,re.I|re.S)),
+            "hasTransportUrl":"transportUrl" in text,
+            "matchedLines":lines[:120]
+          }
+          Path("ops-receipts").mkdir(exist_ok=True)
+          Path("ops-receipts/addon-binding-controller-inspection-20260923.json").write_text(json.dumps(out,indent=2)+"\n")
+          PY
+      - name: Commit sanitised controller inspection
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ops-receipts/stream-binding-values-20260923.json
-          git commit -m "ops: record stream binding metadata"
+          git add ops-receipts/addon-binding-controller-inspection-20260923.json
+          git commit -m "ops: inspect addon binding controller"
           git push origin HEAD:ops/stream-compatibility-regression-20260923
