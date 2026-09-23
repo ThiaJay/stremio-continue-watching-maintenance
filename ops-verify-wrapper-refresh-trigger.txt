@@ -1,0 +1,1 @@
+Verify scheduled wrapper manifest refresh after guarded controller deployment.
