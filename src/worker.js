@@ -13,12 +13,11 @@ const REPORTED_REPAIR_RETRY_MS=60*60*1000;
 const QUIET_MS=30*60*1000;
 const WATCHED_THRESHOLD=0.7;
 const CREDITS_THRESHOLD=0.9;
-const NEAR_END_THRESHOLD=0.95;
-const NEAR_END_MAX_REMAINING_MS=3*60*1000;
+const NEAR_END_THRESHOLD=0.98;
+const NEAR_END_MAX_REMAINING_MS=2*60*1000;
 const RESIDUAL_POINTER_MAX_MS=15_000;
 const NEAR_ZERO_RESUME_MAX_MS=1_000;
 const RESIDUAL_STALE_MS=24*60*60*1000;
-const WATCHED_RESUME_STALE_MS=24*60*60*1000;
 const ANCIENT_RESIDUAL_STALE_MS=30*24*60*60*1000;
 const CRON_MS=10*60*1000;
 const BACKUP_TTL_MS=14*24*60*60*1000;
@@ -281,16 +280,13 @@ async function completionDecision(item,meta,now){
 
   if(item.type==="movie"){
     if(typeof state.video_id!=="string"||!state.video_id)return null;
-    const watchedEvidence=Number(state.flaggedWatched)===1||Number(state.timesWatched)>0;
-    if(nearEnd&&(watchedEvidence||timeWatchedRatio>=NEAR_END_THRESHOLD)){
+    if(Number(state.flaggedWatched)===1&&offsetRatio>CREDITS_THRESHOLD){
+      return {id:item._id,before:structuredClone(item),reason:"movie-past-native-credits-threshold-stale-progress"};
+    }
+    if(nearEnd&&timeWatchedRatio>=NEAR_END_THRESHOLD){
       return {id:item._id,before:structuredClone(item),reason:"movie-near-end-completed-resume"};
     }
-    if(watchedEvidence&&now-playbackActivityTime(item)>=WATCHED_RESUME_STALE_MS){
-      return {id:item._id,before:structuredClone(item),reason:"watched-movie-stale-resume"};
-    }
-    if(Number(state.flaggedWatched)!==1)return null;
-    if(offsetRatio<=CREDITS_THRESHOLD)return null;
-    return {id:item._id,before:structuredClone(item),reason:"movie-past-native-credits-threshold-stale-progress"};
+    return null;
   }
 
   if(!/^tt\d{5,12}$/.test(item._id))return null;
@@ -310,9 +306,6 @@ async function completionDecision(item,meta,now){
   const last=released.at(-1);
   if(bits[last.i]!==true)return null;
   if(!pointerWatched)return null;
-  if(now-playbackActivityTime(item)>=WATCHED_RESUME_STALE_MS){
-    return {id:item._id,before:structuredClone(item),reason:"fully-watched-series-stale-resume"};
-  }
   const pointerIsFinal=String(state.video_id||"")===String(last.v.id);
   if(!pointerIsFinal){
     if(
@@ -370,10 +363,7 @@ function selectFinishedResumeItems(items,scheduledTime){
       if(scheduledTime-playbackActivityTime(item)<QUIET_MS)return false;
       const offsetRatio=offset/duration,remainingMs=Math.max(0,duration-offset);
       const nearEnd=offsetRatio>=NEAR_END_THRESHOLD&&remainingMs<=NEAR_END_MAX_REMAINING_MS;
-      if(nearEnd)return true;
-      if(scheduledTime-playbackActivityTime(item)<WATCHED_RESUME_STALE_MS)return false;
-      if(item.type==="movie")return Number(state.flaggedWatched)===1||Number(state.timesWatched)>0;
-      return /^tt\d{5,12}$/.test(String(item._id||""))&&Boolean(watchedAnchor(state.watched));
+      return nearEnd;
     })
     .sort((a,b)=>{
       const ar=Number(a.state?.timeOffset)/Number(a.state?.duration),br=Number(b.state?.timeOffset)/Number(b.state?.duration);
@@ -807,4 +797,4 @@ const worker={
   async fetch(){return new Response(JSON.stringify({error:"Not found"}),{status:404,headers:{"content-type":"application/json","cache-control":"no-store"}});},
   async scheduled(controller,env,ctx){const when=Number(controller?.scheduledTime||Date.now());const task=run(env,when).then(async s=>{try{await recordRun(env,s,when);}catch{}console.log(JSON.stringify({event:"stremio-watch-state-maintenance",...s}));});ctx?.waitUntil?ctx.waitUntil(task):await task;}
 };
-export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,FINISHED_RESUME_BATCH_SIZE,MAX_FINISHED_RESUME_WRITES,REPORTED_REPAIR_BATCH_SIZE,REPORTED_REPAIR_RETRY_MS,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,NEAR_END_THRESHOLD,NEAR_END_MAX_REMAINING_MS,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,WATCHED_RESUME_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectFinishedResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,resumeOnlyMutationInvariant,readbackMismatchCode,readbackAfterWrite,run,apply};
+export {worker as default,StateError,BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,FINISHED_RESUME_BATCH_SIZE,MAX_FINISHED_RESUME_WRITES,REPORTED_REPAIR_BATCH_SIZE,REPORTED_REPAIR_RETRY_MS,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,NEAR_END_THRESHOLD,NEAR_END_MAX_REMAINING_MS,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,episodeInfo,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,activityTime,playbackActivityTime,normalizedName,canonicalIdFromVideoId,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectFinishedResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,resumeOnlyMutationInvariant,readbackMismatchCode,readbackAfterWrite,run,apply};
