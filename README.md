@@ -46,9 +46,9 @@ This rule does not infer that a title is watched. It preserves watched state, wa
 
 ### Finished resume cleanup
 
-A title is considered near the end only when playback is at least 95% complete and no more than three minutes remain. Cleanup still requires independent watched evidence, either a watched marker, the pointed episode watched bit or at least 95% recorded watch time. A seek near the end by itself is not enough.
+A title is considered near the end only when playback is at least 98% complete and no more than two minutes remain. Cleanup still requires independent watched evidence. For series, the pointed episode must already be watched or recorded watch time must independently reach the same threshold. For films without the normal watched flag, recorded watch time must independently reach the same threshold. A seek near the end by itself is not enough.
 
-A fully watched series or watched movie with a stale resume pointer can also be cleared after 24 hours without playback activity. Recent rewatches and low-progress intentional resumes remain protected.
+Existing rewatch protections remain in force. Older meaningful rewatches, low-progress resumes and films that merely have historical watch counts are not cleared by this lane.
 
 This lane scans at most 12 candidates and writes at most four per run. Every write still changes only `state.timeOffset` to zero and passes the same backup, account, concurrency and readback gates.
 
