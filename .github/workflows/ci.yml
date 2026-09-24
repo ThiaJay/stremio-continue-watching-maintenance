@@ -27,7 +27,7 @@ jobs:
 
   deploy_continue_watching_v1_7_5:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Deploy Continue Watching v1.7.5 safely'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Deploy Continue Watching v1.7.5 safely')
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
