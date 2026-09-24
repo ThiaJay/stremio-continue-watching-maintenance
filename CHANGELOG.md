@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.4 — 2026-09-24
+
+- Adds an independent pre-write resume-only mutation invariant before any Stremio datastore write.
+- A resume cleanup candidate is rejected unless the only account-state change is `state.timeOffset` becoming exactly zero, plus the expected LibraryItem modification timestamp.
+- Explicitly protects the series watched bitmap, `timesWatched`, `flaggedWatched`, per-video and overall watch time, video identity, `lastWatched`, duration, notification state and all unrelated LibraryItem fields.
+- Reuses the same invariant for post-write readback so pre-write intent and verified outcome are checked against one contract.
+- Adds episode and film regressions shaped around the reproduced Daryl Dixon and Alvin move-to-end failures.
+- Keeps encrypted backup, account fingerprint, second-read concurrency gates, bounded write limits and exact zero readback unchanged.
+
+
 ## 1.7.3 — 2026-09-22
 
 - Extends the privacy-safe diagnostic lane to active expiring reported-repair targets.
