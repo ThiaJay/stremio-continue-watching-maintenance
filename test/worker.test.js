@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,readbackMismatchCode,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,resumeOnlyMutationInvariant,readbackMismatchCode,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -842,6 +842,37 @@ function delayedReadbackFixture(initial,{visibleAfter=3}={}){
   return{fetchImpl,get row(){return row},get puts(){return puts},get postWriteReads(){return postWriteReads}};
 }
 
+
+test("resume-only mutation guard rejects watched-state, history and identity changes",async()=>{
+  const before=await libraryItem();
+  const candidate=structuredClone(before);
+  candidate.state.timeOffset=0;
+  candidate._mtime=new Date(NOW).toISOString();
+  assert.equal(resumeOnlyMutationInvariant(before,candidate),true);
+
+  const mutations=[
+    x=>{x.state.watched="changed";},
+    x=>{x.state.timesWatched=Number(x.state.timesWatched)+1;},
+    x=>{x.state.flaggedWatched=Number(x.state.flaggedWatched)===1?0:1;},
+    x=>{x.state.timeWatched=Number(x.state.timeWatched)+1;},
+    x=>{x.state.overallTimeWatched=Number(x.state.overallTimeWatched)+1;},
+    x=>{x.state.video_id="tt99999:9:9";},
+    x=>{x.state.lastWatched=new Date(NOW+60_000).toISOString();},
+    x=>{x.state.duration=Number(x.state.duration)+1;},
+    x=>{x.state.noNotif=!x.state.noNotif;},
+    x=>{x.name="Different title";}
+  ];
+  for(const mutate of mutations){
+    const bad=structuredClone(candidate);
+    mutate(bad);
+    assert.equal(resumeOnlyMutationInvariant(before,bad),false);
+  }
+
+  const notCleared=structuredClone(before);
+  notCleared._mtime=new Date(NOW).toISOString();
+  assert.equal(resumeOnlyMutationInvariant(before,notCleared),false);
+});
+
 test("readback mismatch classification distinguishes ignored, partial and concurrent state",async()=>{
   const before=await libraryItem();
   const candidate=structuredClone(before);
@@ -953,6 +984,25 @@ test("active reported repair secret also drives privacy-safe diagnostics",async(
 });
 
 function key(){const b=new Uint8Array(32);crypto.getRandomValues(b);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
+
+test("episode resume cleanup preserves watched history and identity after the Daryl Dixon shaped regression",async()=>{
+  const before=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:12_000,duration:100_000,flagged:0,mtime:NOW-ANCIENT_RESIDUAL_STALE_MS-60_000});
+  before.state.timeWatched=11_900;
+  before.state.lastWatched=new Date(NOW-ANCIENT_RESIDUAL_STALE_MS-60_000).toISOString();
+  const snapshot=structuredClone(before);
+  const f=fixture(before),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
+  const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding(meta)};
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.verifiedWrites,1);
+  assert.equal(f.row.state.timeOffset,0);
+  assert.equal(resumeOnlyMutationInvariant(snapshot,f.row),true);
+  assert.equal(f.row.state.watched,snapshot.state.watched);
+  assert.equal(f.row.state.timesWatched,snapshot.state.timesWatched);
+  assert.equal(f.row.state.flaggedWatched,snapshot.state.flaggedWatched);
+  assert.equal(f.row.state.video_id,snapshot.state.video_id);
+  assert.equal(f.row.state.lastWatched,snapshot.state.lastWatched);
+});
+
 test("scheduled run clears only timeOffset and keeps watched history intact",async()=>{
   const before=await libraryItem(),f=fixture(before),db=new DB(),meta={id:"tt12345",type:"series",videos:videos()};
   const env={STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,METADATA:metaBinding(meta)};
@@ -1088,6 +1138,27 @@ test("scheduled movie cleanup does not depend on metadata service",async()=>{
   assert.equal(db.rows.length,1);
 });
 
+
+
+test("movie resume cleanup preserves watched history and identity after the Alvin shaped regression",async()=>{
+  const before=movieItem({id:"tt9990003",offset:950,duration:1000,flagged:1,mtime:NOW-QUIET_MS-1000});
+  const snapshot=structuredClone(before);
+  const f=fixture(before),db=new DB();
+  const env={
+    STREMIO_AUTHKEY:"auth-key-value",EXPECTED_ACCOUNT_FINGERPRINT:await fingerprint(),
+    BACKUP_ENCRYPTION_KEY:key(),BACKUP_DB:db,
+    METADATA:{fetch:async()=>{throw new Error("metadata should not be called for movies");}}
+  };
+  const s=await run(env,NOW,{fetchImpl:f.fetchImpl,sleep:async()=>{},now:()=>NOW});
+  assert.equal(s.verifiedWrites,1);
+  assert.equal(f.row.state.timeOffset,0);
+  assert.equal(resumeOnlyMutationInvariant(snapshot,f.row),true);
+  assert.equal(f.row.state.timesWatched,snapshot.state.timesWatched);
+  assert.equal(f.row.state.flaggedWatched,snapshot.state.flaggedWatched);
+  assert.equal(f.row.state.timeWatched,snapshot.state.timeWatched);
+  assert.equal(f.row.state.video_id,snapshot.state.video_id);
+  assert.equal(f.row.state.lastWatched,snapshot.state.lastWatched);
+});
 
 test("removed temporary TMDB alias is cleared only when an exact canonical IMDb counterpart exists",async()=>{
   const canonical=await libraryItem();
