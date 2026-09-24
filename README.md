@@ -6,9 +6,11 @@ The production service is a private Cloudflare scheduled Worker. It runs every 1
 
 ## Current production state
 
-Version 1.7.4 is the current source hardening candidate. It adds an independent pre-write resume-only mutation invariant and exact episode/film regressions proving that resume cleanup cannot alter watched bits, watched counters, playback history or video identity. Production remains on the accepted 1.7.3 deployment until the 1.7.4 candidate completes CI and deployment acceptance.
+Version 1.7.4 is now the accepted production source. It adds an independent pre-write resume-only mutation invariant and exact episode and film regressions proving that resume cleanup cannot alter watched bits, watched counters, playback history or video identity.
 
-Version 1.7.3 remains the published release. A guarded production hotfix was deployed on 24 September 2026 from source commit `9ed1a5b9362eb532211cf3827d300ed51bb023e8`.
+The guarded production deployment completed on 24 September 2026 from source commit `b67a78374c18611dc6e5fa7d6761fa9fcd54e0ed`. Linux, Windows and macOS tests passed before deployment. The live Worker source matched SHA-256 `093bb76e1da6b6bb086ccced0c94138b2e2e143a7636ceea74d90f1d0289e089`, while the existing bindings and ten-minute cron were preserved.
+
+Version 1.7.3 remains the latest immutable GitHub release until the 1.7.4 release package is published. A guarded production hotfix was deployed on 24 September 2026 from source commit `9ed1a5b9362eb532211cf3827d300ed51bb023e8`.
 
 The hotfix adds recognition of explicit series title-level watched transitions that increment the series watched counter without changing the episode bitmap. This closes a case where a title can be marked watched yet retain stale Continue Watching progress.
 
