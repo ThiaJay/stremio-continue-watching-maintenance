@@ -60,3 +60,19 @@ jobs:
       - name: Deploy exact validated Story Order v1.0.10 source
         shell: bash
         run: bash scripts/deploy-story-order-v1.0.10.sh
+
+
+  diagnose_story_order_cloudflare_target:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Diagnose Story Order Cloudflare target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SCRIPT_NAME: stremio-story-order
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read Story Order Cloudflare target
+        shell: bash
+        run: bash scripts/diagnose-story-order-cloudflare-target.sh
