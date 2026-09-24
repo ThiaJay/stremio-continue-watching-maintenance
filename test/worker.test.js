@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,REPORTED_REPAIR_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,resumeOnlyMutationInvariant,readbackMismatchCode,run
+  BATCH_SIZE,MAX_WRITES,EXPLICIT_BATCH_SIZE,MAX_EXPLICIT_WRITES,ANCIENT_RESIDUAL_BATCH_SIZE,FINISHED_RESUME_BATCH_SIZE,MAX_FINISHED_RESUME_WRITES,REPORTED_REPAIR_BATCH_SIZE,QUIET_MS,WATCHED_THRESHOLD,CREDITS_THRESHOLD,NEAR_END_THRESHOLD,NEAR_END_MAX_REMAINING_MS,RESIDUAL_POINTER_MAX_MS,RESIDUAL_STALE_MS,WATCHED_RESUME_STALE_MS,ANCIENT_RESIDUAL_STALE_MS,BULK_WATCHED_TRANSITION_WINDOW_MS,orderedVideos,decodeWatched,watchedAnchor,metadataProof,metadata,playbackActivityTime,observationKey,watchedHash,videoHash,observeWatchedChanges,bulkWatchedTransitionDecision,movieMarkedWatchedTransitionDecision,legacyAliasDecision,completionDecision,selectBatch,nearZeroResumeDecision,selectNearZeroResumeItems,selectFinishedResumeItems,selectAncientResidualItems,selectExplicitTransitionItems,secretReportedRepairHashes,loadReportedRepairHashes,selectReportedRepairItems,reportedRepairDecision,recordDiagnosticTargets,resumeOnlyMutationInvariant,readbackMismatchCode,run
 } from "../src/worker.js";
 
 const NOW=Date.parse("2026-09-18T20:00:00Z");
@@ -193,6 +193,71 @@ test("sub-threshold progress is preserved as an intentional resume",async()=>{
   const item=await libraryItem({offset:500,duration:1000});
   assert.ok(500/1000<WATCHED_THRESHOLD);
   assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("near-end watched episode clears even when the series still has another released unwatched episode",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,false],offset:95_000,duration:100_000,mtime:NOW-QUIET_MS-1000});
+  item.state.timeWatched=40_000;
+  const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
+  assert.equal(d?.reason,"series-near-end-completed-resume");
+});
+
+test("near-end unwatched episode with weak playback evidence remains resumable",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,false,false],offset:95_000,duration:100_000,mtime:NOW-QUIET_MS-1000});
+  item.state.timeWatched=40_000;
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("fully watched series stale resume clears after one day even when pointer is an older meaningful rewatch position",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:45_000,duration:100_000,mtime:NOW-WATCHED_RESUME_STALE_MS-1000});
+  item.state.timeWatched=45_000;
+  item.state.lastWatched=new Date(NOW-WATCHED_RESUME_STALE_MS-1000).toISOString();
+  const d=await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW);
+  assert.equal(d?.reason,"fully-watched-series-stale-resume");
+});
+
+test("fully watched series recent rewatch remains resumable below the near-end gate",async()=>{
+  const item=await libraryItem({pointer:"tt12345:1:2",bits:[true,true,true],offset:45_000,duration:100_000,mtime:NOW-QUIET_MS-1000});
+  item.state.timeWatched=45_000;
+  item.state.lastWatched=new Date(NOW-QUIET_MS-1000).toISOString();
+  assert.equal(await completionDecision(item,{id:"tt12345",type:"series",videos:videos()},NOW),null);
+});
+
+test("near-end movie clears when watch time independently proves completion even without watched flag",async()=>{
+  const item=movieItem({id:"tt7770001",offset:5_820_000,duration:6_000_000,flagged:0,mtime:NOW-QUIET_MS-1000});
+  item.state.timesWatched=0;
+  item.state.timeWatched=5_820_000;
+  const d=await completionDecision(item,null,NOW);
+  assert.equal(d?.reason,"movie-near-end-completed-resume");
+});
+
+test("near-end movie with weak watch evidence remains resumable",async()=>{
+  const item=movieItem({id:"tt7770002",offset:5_820_000,duration:6_000_000,flagged:0,mtime:NOW-QUIET_MS-1000});
+  item.state.timesWatched=0;
+  item.state.timeWatched=1_000_000;
+  assert.equal(await completionDecision(item,null,NOW),null);
+});
+
+test("watched movie stale resume clears after one day below the credits threshold",async()=>{
+  const item=movieItem({id:"tt7770003",offset:2_000_000,duration:6_000_000,flagged:1,mtime:NOW-WATCHED_RESUME_STALE_MS-1000});
+  item.state.timesWatched=1;
+  item.state.timeWatched=2_000_000;
+  item.state.lastWatched=new Date(NOW-WATCHED_RESUME_STALE_MS-1000).toISOString();
+  const d=await completionDecision(item,null,NOW);
+  assert.equal(d?.reason,"watched-movie-stale-resume");
+});
+
+test("finished resume selector prioritises near-end candidates and stays bounded",async()=>{
+  const rows=[];
+  for(let i=0;i<FINISHED_RESUME_BATCH_SIZE+4;i++){
+    const item=movieItem({id:"tt"+String(8800000+i),offset:95_000,duration:100_000,flagged:1,mtime:NOW-QUIET_MS-1000-i});
+    rows.push(item);
+  }
+  const selected=selectFinishedResumeItems(rows,NOW);
+  assert.equal(selected.length,FINISHED_RESUME_BATCH_SIZE);
+  assert.ok(MAX_FINISHED_RESUME_WRITES<FINISHED_RESUME_BATCH_SIZE);
+  assert.ok(NEAR_END_THRESHOLD>=0.95);
+  assert.equal(NEAR_END_MAX_REMAINING_MS,3*60*1000);
 });
 test("unwatched released episode prevents cleanup",async()=>{
   const item=await libraryItem({bits:[true,true,false]});
