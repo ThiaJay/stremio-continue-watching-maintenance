@@ -6,7 +6,7 @@ The production service is a private Cloudflare scheduled Worker. It runs every 1
 
 ## Current production state
 
-Version 1.7.5 is the current source candidate. It adds a bounded finished-resume lane so genuinely near-finished items and stale fully watched titles do not linger in Continue Watching. Production remains on the accepted 1.7.4 deployment until 1.7.5 completes CI and deployment acceptance.
+Version 1.7.5 is now the accepted live production source. It adds a bounded finished-resume lane so genuinely near-finished items do not linger in Continue Watching while preserving the existing rewatch protections. The guarded deployment completed on 24 September 2026 from source commit `f53d301db50f778aab20379f4c0c58a80e4c61d6`. Linux, Windows and macOS passed before deployment. The live Worker source matched SHA-256 `5bd5940f8aa1e510eaf8dbbcd17de9a584598173920b8ad395290476c0421e6d`, the existing bindings were unchanged and the ten-minute cron was preserved.
 
 Version 1.7.4 is now the accepted production source. It adds an independent pre-write resume-only mutation invariant and exact episode and film regressions proving that resume cleanup cannot alter watched bits, watched counters, playback history or video identity.
 
