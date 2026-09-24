@@ -1,10 +1,10 @@
 {
   "product": "Continue Watching Maintenance for Stremio",
-  "version": "1.7.3",
-  "status": "LIVE_PRODUCTION_HOTFIX_VERIFIED",
+  "version": "1.7.5",
+  "status": "LIVE_PRODUCTION_VERIFIED",
   "classification": "hosted-maintenance",
-  "productSourceCommit": "9ed1a5b9362eb532211cf3827d300ed51bb023e8",
-  "finalProductionDeploymentPrefix": "5b68e203-fbe",
+  "productSourceCommit": "f53d301db50f778aab20379f4c0c58a80e4c61d6",
+  "finalProductionDeploymentPrefix": "35963741-8bc",
   "normalMode": "private scheduled maintenance",
   "publicProtocolSurface": "NONE",
   "cron": "*/10 * * * *",
@@ -17,7 +17,7 @@
       "windows",
       "macos"
     ],
-    "run": 35667444749
+    "run": 36071360306
   },
   "productionAcceptance": {
     "result": "accepted",
@@ -41,7 +41,13 @@
     "legacyTmdbAliasCleanup": true,
     "reportedIssuePriorityLane": true,
     "reportedTargets": "private 16-character hashes with expiry",
-    "reportedLaneCannotBypassEligibility": true
+    "reportedLaneCannotBypassEligibility": true,
+    "nearEndResumeThreshold": 0.98,
+    "nearEndMaxRemainingMs": 120000,
+    "finishedResumeBatchSize": 12,
+    "maxFinishedResumeWritesPerRun": 4,
+    "nearEndSeriesEvidence": "pointed episode watched bit or recorded watch time at threshold",
+    "nearEndMovieEvidence": "native watched flag above existing credits threshold, or recorded watch time at near-end threshold"
   },
   "safety": {
     "accountFingerprintBound": true,
@@ -85,5 +91,17 @@
     "guardedDeployment": "passed",
     "settingsAndBindingsPreserved": true,
     "tenMinuteCronPreserved": true
+  },
+  "productionV175": {
+    "deployedAt": "2026-09-24",
+    "sourceCommit": "f53d301db50f778aab20379f4c0c58a80e4c61d6",
+    "deploymentPrefix": "35963741-8bc",
+    "liveSourceSha256": "5bd5940f8aa1e510eaf8dbbcd17de9a584598173920b8ad395290476c0421e6d",
+    "deploymentWorkflowRun": 36071360306,
+    "crossPlatformCi": "passed",
+    "guardedDeployment": "passed",
+    "settingsAndBindingsPreserved": true,
+    "tenMinuteCronPreserved": true,
+    "oneOffDeploymentTriggerRemovedAfterAcceptance": true
   }
 }
