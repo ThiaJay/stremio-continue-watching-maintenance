@@ -24,3 +24,36 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm audit --audit-level=high
+
+
+  deploy_story_order_v1_0_15_reconciled:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Deploy reconciled Story Order v1.0.15 safely'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v7
+        with:
+          repository: ThiaJay/stremio-story-order
+          ref: f23db9db430255d52482e21e1553d17bdee93032
+          path: story-order
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: story-order/package-lock.json
+      - name: Verify deployment credentials are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Deploy exact reconciled Story Order v1.0.15 source
+        shell: bash
+        run: bash scripts/deploy-story-order-v1.0.15-reconciled.sh
