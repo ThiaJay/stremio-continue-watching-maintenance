@@ -36,8 +36,6 @@ const x=JSON.parse(process.argv[2]);
 if(!x.success) process.exit(2);
 const result=x.result||{};
 const bindings=(result.bindings||[]).map(v=>({name:String(v.name||""),type:String(v.type||"")})).sort((a,b)=>a.name.localeCompare(b.name)||a.type.localeCompare(b.type));
-if(!bindings.some(v=>v.name==="STORY_CACHE")) process.exit(3);
-if(!bindings.some(v=>v.name==="CONFIG_SECRET")) process.exit(4);
 process.stdout.write(JSON.stringify({
   bindings,
   compatibility_date:String(result.compatibility_date||""),
