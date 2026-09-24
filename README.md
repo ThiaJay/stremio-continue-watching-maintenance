@@ -6,6 +6,8 @@ The production service is a private Cloudflare scheduled Worker. It runs every 1
 
 ## Current production state
 
+Version 1.7.5 is the current source candidate. It adds a bounded finished-resume lane so genuinely near-finished items and stale fully watched titles do not linger in Continue Watching. Production remains on the accepted 1.7.4 deployment until 1.7.5 completes CI and deployment acceptance.
+
 Version 1.7.4 is now the accepted production source. It adds an independent pre-write resume-only mutation invariant and exact episode and film regressions proving that resume cleanup cannot alter watched bits, watched counters, playback history or video identity.
 
 The guarded production deployment completed on 24 September 2026 from source commit `b67a78374c18611dc6e5fa7d6761fa9fcd54e0ed`. Linux, Windows and macOS tests passed before deployment. The live Worker source matched SHA-256 `093bb76e1da6b6bb086ccced0c94138b2e2e143a7636ceea74d90f1d0289e089`, while the existing bindings and ten-minute cron were preserved.
@@ -41,6 +43,14 @@ Movie intent requires the manual watched fingerprint to be distinguishable from 
 A quiet positive resume pointer of one second or less can be treated as non-meaningful resume noise after the normal 30-minute playback quiet window.
 
 This rule does not infer that a title is watched. It preserves watched state, watch time, video identity and all unrelated fields.
+
+### Finished resume cleanup
+
+A title is considered near the end only when playback is at least 98% complete and no more than two minutes remain. Cleanup still requires independent watched evidence. For series, the pointed episode must already be watched or recorded watch time must independently reach the same threshold. For films without the normal watched flag, recorded watch time must independently reach the same threshold. A seek near the end by itself is not enough.
+
+Existing rewatch protections remain in force. Older meaningful rewatches, low-progress resumes and films that merely have historical watch counts are not cleared by this lane.
+
+This lane scans at most 12 candidates and writes at most four per run. Every write still changes only `state.timeOffset` to zero and passes the same backup, account, concurrency and readback gates.
 
 ### Fully watched residual progress
 
