@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.5 — 2026-09-24
+
+- Adds a bounded finished-resume lane for Continue Watching cleanup.
+- Treats progress as near-end only when playback is at least 95% complete and no more than three minutes remain.
+- Requires independent watched evidence for near-end cleanup: a watched marker, the pointed episode watched bit or at least 95% recorded watch time.
+- Clears fully watched series and watched movies after 24 hours of playback inactivity even when an older stale resume pointer is not the final episode.
+- Preserves active rewatches, low-progress intentional resumes and near-end seeks that lack watched evidence.
+- Keeps the resume-only mutation invariant, encrypted backups, account fingerprint checks, concurrency guards and exact zero readback.
+- Processes at most 12 finished-resume candidates per run and writes at most four, independently of the existing normal two-write lane.
+
 ## 1.7.4 — 2026-09-24
 
 - Adds an independent pre-write resume-only mutation invariant before any Stremio datastore write.
