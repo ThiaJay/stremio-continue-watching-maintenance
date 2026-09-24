@@ -27,6 +27,7 @@ jobs:
 
 
   deploy_story_order_v1_0_10:
+    # Guarded retry preserves the live Cloudflare binding set exactly as found.
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Deploy Story Order v1.0.10 safely'
     runs-on: ubuntu-latest
