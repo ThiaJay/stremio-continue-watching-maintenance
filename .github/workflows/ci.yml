@@ -26,8 +26,8 @@ jobs:
       - run: npm audit --audit-level=high
 
 
-  deploy_story_order_v1_0_24:
-    if: github.event_name == 'push' && github.event.head_commit.message == 'Deploy Story Order v1.0.24 safely'
+  deploy_story_order_v1_0_25:
+    if: github.event_name == 'push' && github.event.head_commit.message == 'Deploy Story Order v1.0.25 safely'
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: ThiaJay/stremio-story-order
-          ref: d64d6371d6551625e1d65b7f35c7ac98d94ecc39
+          ref: 1f73820ee164691086837d0eceacf17814ab4659
           path: story-order
       - uses: actions/setup-node@v7
         with:
@@ -43,10 +43,10 @@ jobs:
       - name: Prepare guarded deploy script
         run: |
           cp scripts/deploy-story-order-v1.0.15.sh /tmp/deploy-story-order.sh
-          sed -i 's/1.0.15/1.0.24/g' /tmp/deploy-story-order.sh
-          sed -i 's/a82f7b054a9bcb2a6543b175f07bbde006d2c21c/d64d6371d6551625e1d65b7f35c7ac98d94ecc39/g' /tmp/deploy-story-order.sh
+          sed -i 's/1.0.15/1.0.25/g' /tmp/deploy-story-order.sh
+          sed -i 's/a82f7b054a9bcb2a6543b175f07bbde006d2c21c/1f73820ee164691086837d0eceacf17814ab4659/g' /tmp/deploy-story-order.sh
           chmod +x /tmp/deploy-story-order.sh
-      - name: Deploy exact validated Story Order v1.0.24 source
+      - name: Deploy exact validated Story Order v1.0.25 source
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
