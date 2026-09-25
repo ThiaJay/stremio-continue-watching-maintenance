@@ -42,7 +42,7 @@ jobs:
       - name: Prepare guarded deploy script
         run: |
           cp scripts/deploy-story-order-v1.0.15.sh /tmp/deploy-story-order.sh
-          sed -i 's/1.0.15/1.0.20/g' /tmp/deploy-story-order.sh
+          sed -i 's/1.0.15/1.0.21/g' /tmp/deploy-story-order.sh
           sed -i 's/a82f7b054a9bcb2a6543b175f07bbde006d2c21c/00a11ee3024b19a2fa11fec97d1876ed65f28d43/g' /tmp/deploy-story-order.sh
           chmod +x /tmp/deploy-story-order.sh
       - name: Deploy exact validated Story Order v1.0.21 source
