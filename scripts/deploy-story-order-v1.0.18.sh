@@ -5,7 +5,7 @@ test -n "${CLOUDFLARE_API_TOKEN:-}"
 test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
 test -d story-order/.git
 cd story-order
-test "$(git rev-parse HEAD)" = "9418d21478d5cc9d14afadbc03f48e7e4d2eb4ae"
+test "$(git rev-parse HEAD)" = "90f5214f06d65990452cb551893c815ac9382ef2"
 test "$(node -p "require('./package.json').version")" = "1.0.18"
 
 npm ci --ignore-scripts
